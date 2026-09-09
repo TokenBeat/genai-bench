@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>GenAI Bench · 精选沉浸式 Web 演示</title>
+<style>
+  :root {
+    --bg: #04060e;
+    --panel: rgba(13, 18, 32, 0.6);
+    --panel-border: rgba(148, 163, 184, 0.14);
+    --text: #e8ecf4;
+    --text-dim: #8b96ad;
+    --text-faint: #5c677d;
+    --orange: #f6821f;
+    --jade: #7f9c86;
+    --gold: #c9a45a;
+    --radius: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body {
+    font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #0a1122 0%, #060a16 45%, #02040b 100%);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    justify-content: center;
+    padding: 72px 24px 96px;
+  }
+  .wrap { width: 100%; max-width: 960px; }
+
+  /* ---------- 头部 ---------- */
+  header { margin-bottom: 56px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: 0.28em; text-transform: uppercase;
+    color: var(--orange); margin-bottom: 18px;
+  }
+  .kicker::before {
+    content: ""; width: 28px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--orange));
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 700; letter-spacing: -0.02em; line-height: 1.15;
+  }
+  h1 .accent { color: var(--orange); }
+  .desc {
+    margin-top: 16px; max-width: 640px;
+    font-size: 15px; line-height: 1.75; color: var(--text-dim);
+  }
+  .desc strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- 卡片区 ---------- */
+  .grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+
+  a.card {
+    display: flex; flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 28px 26px 24px;
+    text-decoration: none; color: inherit;
+    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+    position: relative; overflow: hidden;
+  }
+  a.card::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(80% 60% at 50% 0%, var(--glow) 0%, transparent 70%);
+    opacity: 0; transition: opacity .25s ease; pointer-events: none;
+  }
+  a.card:hover {
+    transform: translateY(-4px);
+    border-color: var(--edge);
+    box-shadow: 0 18px 40px -18px var(--shadow);
+  }
+  a.card:hover::before { opacity: 1; }
+
+  .card-theme-globe { --glow: rgba(246, 130, 31, .12); --edge: rgba(246, 130, 31, .5); --shadow: rgba(246, 130, 31, .28); }
+  .card-theme-garden { --glow: rgba(127, 156, 134, .14); --edge: rgba(201, 164, 90, .5); --shadow: rgba(127, 156, 134, .3); }
+
+  .card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .icon {
+    width: 46px; height: 46px; border-radius: 12px;
+    display: grid; place-items: center; font-size: 22px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .open-hint {
+    font-size: 12px; color: var(--text-faint);
+    display: inline-flex; align-items: center; gap: 5px;
+    transition: color .25s ease, gap .25s ease;
+  }
+  a.card:hover .open-hint { color: var(--text-dim); gap: 8px; }
+
+  .card h2 { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 8px; }
+  .card p { font-size: 13.5px; line-height: 1.7; color: var(--text-dim); margin-bottom: 20px; flex: 1; }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag {
+    font-size: 11.5px; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-dim); letter-spacing: 0.02em;
+  }
+  .tag.model { color: var(--edge); border-color: var(--edge); font-weight: 550; }
+
+  /* ---------- 底部 ---------- */
+  footer {
+    margin-top: 64px; padding-top: 24px;
+    border-top: 1px solid var(--panel-border);
+    font-size: 12.5px; color: var(--text-faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <span class="kicker">GenAI Bench</span>
+    <h1>精选<span class="accent">沉浸式</span>Web 演示</h1>
+    <p class="desc">
+      收录一系列高质量互动演示 —— 从全球网络数据流到江南园林三维场景，
+      覆盖 <strong>3D 可视化、交互动效与东方美学</strong>等方向，点击卡片即可开启体验。
+    </p>
+  </header>
+
+  <section class="grid">
+    <a class="card card-theme-globe" href="cloudflare-globe.html">
+      <div class="card-top">
+        <span class="icon">🌍</span>
+        <span class="open-hint">打开页面 →</span>
+      </div>
+      <h2>Cloudflare Network · Global Data Flow</h2>
+      <p>三维地球上的 Cloudflare 全球网络数据流可视化：节点分布、链路脉冲与数据流动效，呈现 dark-tech 风格的网络拓扑全景。</p>
+      <div class="meta">
+        <span class="tag model">DeepSeek Pro</span>
+        <span class="tag">3D 可视化</span>
+        <span class="tag">数据流</span>
+      </div>
+    </a>
+
+    <a class="card card-theme-garden" href="suzhou-garden-3d.html">
+      <div class="card-top">
+        <span class="icon">🏮</span>
+        <span class="open-hint">打开页面 →</span>
+      </div>
+      <h2>苏州园林 · 三维复原</h2>
+      <p>远香堂与听风四面亭的江南园林三维复原，水墨纸感的东方美学配色，配合听风、游园等交互体验。</p>
+      <div class="meta">
+        <span class="tag model">deepseek-v4.1-flash</span>
+        <span class="tag">峰值 400 tok/s</span>
+        <span class="tag">3D 场景</span>
+      </div>
+    </a>
+  </section>
+
+  <footer>
+    <span>Powered by <strong>DeepSeek</strong></span>
+    <span>© 2026 TokenBeat · All Rights Reserved</span>
+  </footer>
+</main>
+</body>
+</html>

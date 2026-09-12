@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Global data flow · Cloudflare Network</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#04060c;
+    --panel:rgba(12,16,27,.58);
+    --stroke:rgba(148,163,184,.16);
+    --txt:#e9eef7;
+    --dim:#8a94ab;
+    --accent:#38c8f0;
+    --green:#3ddc97;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--txt);overflow:hidden;
+    font-family:'Space Grotesk',system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;user-select:none;
+  }
+  .mono{font-family:var(--mono)}
+  #container{position:fixed;inset:0}
+  #container canvas{display:block;cursor:grab}
+  #container canvas.hovering{cursor:pointer}
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:2;
+    background:radial-gradient(120% 92% at 50% 42%,transparent 52%,rgba(2,4,10,.62) 100%);
+  }
+  .panel{
+    position:fixed;z-index:10;
+    background:var(--panel);
+    border:1px solid var(--stroke);
+    border-radius:18px;
+    backdrop-filter:blur(18px) saturate(150%);
+    -webkit-backdrop-filter:blur(18px) saturate(150%);
+    box-shadow:0 24px 60px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .k{font-size:9.5px;letter-spacing:.2em;color:var(--dim);text-transform:uppercase}
+  .eyebrow{display:flex;align-items:center;gap:9px;font-size:10.5px;letter-spacing:.26em;color:var(--dim);text-transform:uppercase;font-weight:500}
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none;
+    box-shadow:0 0 0 0 rgba(61,220,151,.55);animation:pulse 2.2s infinite}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(61,220,151,.55)}
+    70%{box-shadow:0 0 0 9px rgba(61,220,151,0)}
+    100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}
+  }
+  /* ---------- left panel ---------- */
+  #leftPanel{top:28px;left:28px;width:312px;padding:22px 24px 20px}
+  #leftPanel h1{
+    margin:10px 0 5px;font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.05;
+    background:linear-gradient(115deg,#ffffff 15%,#9bd8ff 65%,var(--accent) 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;
+  }
+  .heroStat{font-family:var(--mono);font-size:12.5px;color:var(--dim);margin-bottom:18px}
+  .heroStat b{color:var(--txt);font-weight:600;font-size:15px}
+  .chips{display:flex;gap:10px;margin-bottom:18px}
+  .chip{flex:1;border:1px solid var(--stroke);border-radius:12px;padding:9px 12px;background:rgba(255,255,255,.02)}
+  .chip .v{font-family:var(--mono);font-size:17px;font-weight:500;margin-top:4px}
+  .sparkHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .sparkHead .live{color:var(--green)}
+  #spark{display:block;width:100%;height:38px}
+  /* ---------- right column ---------- */
+  #rightCol{position:fixed;top:28px;right:28px;width:268px;display:flex;flex-direction:column;gap:14px;z-index:10}
+  #rightCol .panel{position:static}
+  #legendPanel{padding:16px 18px 12px}
+  #legendPanel .head{display:block;margin-bottom:10px}
+  .lrow{display:flex;align-items:center;gap:10px;padding:6px 8px;margin:0 -8px;border-radius:9px;transition:background .15s}
+  .lrow:hover{background:rgba(255,255,255,.05)}
+  .ldot{width:8px;height:8px;border-radius:50%;flex:none}
+  .lname{flex:1;font-size:12.5px;color:#c9d2e3}
+  .lcount{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .legendNote{margin-top:10px;padding-top:10px;border-top:1px solid var(--stroke);font-size:10px;color:var(--dim);letter-spacing:.04em}
+  #cityPanel{padding:16px 18px 18px;min-height:196px}
+  .cardHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .pin{display:none;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);
+    border:1px solid rgba(56,200,240,.45);border-radius:999px;padding:3px 8px}
+  .pin.on{display:inline-block}
+  .cName{font-size:19px;font-weight:600;letter-spacing:-.01em;margin-bottom:5px}
+  .cRegion{display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:4px;min-height:15px}
+  .cRegion .rdot{width:7px;height:7px;border-radius:50%;display:none}
+  .cCoords{font-size:12px;color:var(--dim);margin-bottom:12px}
+  .divider{height:1px;background:var(--stroke);margin-bottom:11px}
+  .kv{display:flex;justify-content:space-between;align-items:center;padding:3.5px 0}
+  .kv .v{font-size:12px}
+  .status{display:flex;align-items:center;gap:7px;color:var(--green);letter-spacing:.1em;text-transform:uppercase;font-size:10.5px}
+  .status .live-dot{width:6px;height:6px}
+  /* ---------- pause button ---------- */
+  #pauseBtn{
+    position:fixed;right:28px;bottom:28px;z-index:11;
+    display:flex;align-items:center;gap:10px;
+    background:var(--panel);border:1px solid var(--stroke);color:var(--txt);
+    border-radius:999px;padding:11px 20px 11px 15px;
+    font:600 11.5px/1 'Space Grotesk',sans-serif;letter-spacing:.16em;text-transform:uppercase;
+    cursor:pointer;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    box-shadow:0 18px 44px rgba(0,0,0,.45);
+    transition:border-color .2s,transform .15s;
+  }
+  #pauseBtn:hover{border-color:rgba(56,200,240,.55);transform:translateY(-1px)}
+  #pauseBtn svg{width:13px;height:13px;fill:var(--accent);flex:none}
+  /* ---------- hint ---------- */
+  #hint{position:fixed;left:28px;bottom:28px;z-index:9;font-size:10.5px;color:var(--dim);letter-spacing:.08em}
+  #hint i{font-style:normal;opacity:.35;margin:0 8px}
+  /* ---------- tooltip ---------- */
+  #tooltip{
+    position:fixed;z-index:20;pointer-events:none;opacity:0;transition:opacity .12s;
+    background:rgba(10,14,23,.86);border:1px solid var(--stroke);border-radius:12px;
+    padding:10px 13px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    box-shadow:0 14px 36px rgba(0,0,0,.5);max-width:240px;
+  }
+  #tooltip.on{opacity:1}
+  #tooltip .tName{font-size:13.5px;font-weight:600;margin-bottom:2px}
+  #tooltip .tCoords{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-bottom:6px}
+  #tooltip .tRegion{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#c9d2e3}
+  #tooltip .tRegion .dot{width:7px;height:7px;border-radius:50%}
+  /* ---------- loader ---------- */
+  #loader{
+    position:fixed;inset:0;z-index:100;background:var(--bg);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;
+    transition:opacity .7s ease;
+  }
+  #loader.done{opacity:0;pointer-events:none}
+  #loader .lTitle{font-size:38px;font-weight:600;letter-spacing:-.02em;margin:16px 0 34px;
+    background:linear-gradient(115deg,#fff 15%,#9bd8ff 65%,var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+  .lTrack{width:240px;height:2px;background:rgba(148,163,184,.18);border-radius:2px;overflow:hidden}
+  #loadBar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--green));transition:width .35s ease}
+  .lMeta{display:flex;justify-content:space-between;width:240px;margin-top:12px;font-size:10px;color:var(--dim);letter-spacing:.08em}
+  @media (max-width:960px){
+    #rightCol,#hint{display:none}
+    #leftPanel{width:250px;padding:16px 18px}
+    #leftPanel h1{font-size:22px}
+  }
+</style>
+</head>
+<body>
+<div id="container"></div>
+<div id="vignette"></div>
+
+<header class="panel" id="leftPanel">
+  <div class="eyebrow"><span class="live-dot"></span>Cloudflare Network · Live</div>
+  <h1>Global data flow</h1>
+  <div class="heroStat"><b id="statCities">0</b> cities · <b>7</b> regions</div>
+  <div class="chips">
+    <div class="chip"><div class="k">Routes</div><div class="v" id="statRoutes">0</div></div>
+    <div class="chip"><div class="k">Packets</div><div class="v" id="statPackets">0</div></div>
+    <div class="chip"><div class="k">Uptime</div><div class="v">99.99%</div></div>
+  </div>
+  <div class="sparkHead"><span class="k">Network throughput</span><span class="k live">● live</span></div>
+  <canvas id="spark"></canvas>
+</header>
+
+<div id="rightCol">
+  <aside class="panel" id="legendPanel">
+    <span class="k head">Regions</span>
+    <div id="legendRows"></div>
+    <div class="legendNote">Hover a region to highlight its cities</div>
+  </aside>
+  <aside class="panel" id="cityPanel">
+    <div class="cardHead"><span class="k">City detail</span><span class="pin" id="cPin">Pinned</span></div>
+    <div class="cName" id="cName">—</div>
+    <div class="cRegion" id="cRegion"><span class="rdot" id="cRdot"></span><span id="cRegionText">Hover a city marker on the globe</span></div>
+    <div class="cCoords mono" id="cCoords">— · —</div>
+    <div class="divider"></div>
+    <div class="kv"><span class="k">Status</span><span class="v status"><span class="live-dot"></span>Online</span></div>
+    <div class="kv"><span class="k">Routes</span><span class="v mono" id="cEdges">—</span></div>
+    <div class="kv"><span class="k">Marker</span><span class="v mono" id="cIdx">—</span></div>
+  </aside>
+</div>
+
+<button id="pauseBtn" title="Pause / resume animation (Space)">
+  <svg id="icoPause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+  <svg id="icoPlay" viewBox="0 0 24 24" style="display:none"><path d="M8 5l12 7-12 7z"/></svg>
+  <span id="pauseLabel">Pause</span>
+</button>
+
+<div id="hint">Drag to rotate<i>·</i>Scroll to zoom<i>·</i>Hover a city<i>·</i>Click to pin</div>
+<div id="tooltip"></div>
+
+<div id="loader">
+  <div class="eyebrow"><span class="live-dot"></span>Cloudflare Network</div>
+  <div class="lTitle">Global data flow</div>
+  <div class="lTrack"><div id="loadBar"></div></div>
+  <div class="lMeta mono"><span id="loadPct">0%</span><span>Establishing edge connections…</span></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ============================================================
+   DATA — 7 regions, 300+ cities  [name, lat, lon]
+   ============================================================ */
+const REGIONS = [
+  { name: 'North America', color: '#38c8f0' },
+  { name: 'Asia-Pacific',  color: '#8f7dfc' },
+  { name: 'Europe',        color: '#3ddc97' },
+  { name: 'South America', color: '#b8e356' },
+  { name: 'Africa',        color: '#ff5c72' },
+  { name: 'Middle East',   color: '#ffb03f' },
+  { name: 'Oceania',       color: '#e355f0' },
+];
+
+const NA = [
+  ['New York',40.71,-74.01],['Los Angeles',34.05,-118.24],['Chicago',41.88,-87.63],
+  ['Houston',29.76,-95.37],['Phoenix',33.45,-112.07],['Philadelphia',39.95,-75.17],
+  ['San Antonio',29.42,-98.49],['San Diego',32.72,-117.16],['Dallas',32.78,-96.80],
+  ['San Jose',37.34,-121.89],['Austin',30.27,-97.74],['Jacksonville',30.33,-81.66],
+  ['Fort Worth',32.76,-97.33],['Columbus',39.96,-83.00],['Charlotte',35.23,-80.84],
+  ['Indianapolis',39.77,-86.16],['San Francisco',37.77,-122.42],['Seattle',47.61,-122.33],
+  ['Denver',39.74,-104.99],['Washington',38.91,-77.04],['Boston',42.36,-71.06],
+  ['Nashville',36.16,-86.78],['Detroit',42.33,-83.05],['Oklahoma City',35.47,-97.52],
+  ['Portland',45.52,-122.68],['Las Vegas',36.17,-115.14],['Memphis',35.15,-90.05],
+  ['Louisville',38.25,-85.76],['Baltimore',39.29,-76.61],['Milwaukee',43.04,-87.91],
+  ['Albuquerque',35.08,-106.65],['Tucson',32.22,-110.97],['Sacramento',38.58,-121.49],
+  ['Kansas City',39.10,-94.58],['Atlanta',33.75,-84.39],['Miami',25.76,-80.19],
+  ['Raleigh',35.78,-78.64],['Omaha',41.26,-95.94],['Minneapolis',44.98,-93.27],
+  ['New Orleans',29.95,-90.07],['Cleveland',41.50,-81.69],['Tampa',27.95,-82.46],
+  ['Honolulu',21.31,-157.86],['Anchorage',61.22,-149.90],['Salt Lake City',40.76,-111.89],
+  ['Richmond',37.54,-77.44],['Pittsburgh',40.44,-79.99],['El Paso',31.76,-106.49],
+  ['Toronto',43.65,-79.38],['Montreal',45.50,-73.57],['Vancouver',49.28,-123.12],
+  ['Calgary',51.05,-114.07],['Ottawa',45.42,-75.70],['Edmonton',53.55,-113.49],
+  ['Winnipeg',49.90,-97.14],['Halifax',44.65,-63.58],['Quebec City',46.81,-71.21],
+  ['Victoria',48.43,-123.37],['Saskatoon',52.13,-106.67],['St. John\u2019s',47.56,-52.71],
+  ['Mexico City',19.43,-99.13],['Guadalajara',20.66,-103.35],['Monterrey',25.67,-100.31],
+  ['Tijuana',32.51,-117.04],['Canc\u00fan',21.16,-86.85],['Quer\u00e9taro',20.59,-100.39],
+  ['Panama City',8.98,-79.52],['San Jos\u00e9',9.93,-84.08],['San Juan',18.47,-66.11],
+  ['Havana',23.11,-82.37],['Santo Domingo',18.49,-69.93],['Guatemala City',14.63,-90.51],
+  ['Kingston',17.97,-76.79],['San Salvador',13.69,-89.19],['Port-au-Prince',18.54,-72.34],
+  ['Nassau',25.06,-77.35]
+];
+const AP = [
+  ['Tokyo',35.68,139.69],['Osaka',34.69,135.50],['Nagoya',35.18,136.91],
+  ['Sapporo',43.06,141.35],['Fukuoka',33.59,130.40],['Sendai',38.27,140.87],['Naha',26.21,127.68],
+  ['Seoul',37.57,126.98],['Busan',35.18,129.08],['Incheon',37.46,126.44],
+  ['Beijing',39.90,116.40],['Shanghai',31.23,121.47],['Guangzhou',23.13,113.26],
+  ['Shenzhen',22.54,114.06],['Chengdu',30.57,104.07],['Chongqing',29.56,106.55],
+  ['Hangzhou',30.27,120.16],['Wuhan',30.59,114.31],['Xi\u2019an',34.34,108.94],
+  ['Nanjing',32.06,118.80],['Tianjin',39.34,117.36],['Qingdao',36.07,120.38],
+  ['Xiamen',24.48,118.09],['Dalian',38.91,121.61],['Shenyang',41.81,123.43],
+  ['Harbin',45.80,126.53],['Kunming',25.04,102.72],['Urumqi',43.83,87.62],
+  ['Lanzhou',36.06,103.83],['Hefei',31.82,117.23],['Zhengzhou',34.75,113.63],
+  ['Changsha',28.23,112.94],['Fuzhou',26.07,119.30],['Jinan',36.65,116.99],
+  ['Taipei',25.03,121.57],['Kaohsiung',22.63,120.30],
+  ['Hong Kong',22.32,114.17],['Macao',22.20,113.55],
+  ['Singapore',1.35,103.82],['Kuala Lumpur',3.14,101.69],['Penang',5.41,100.33],
+  ['Jakarta',-6.21,106.85],['Surabaya',-7.25,112.75],['Denpasar',-8.65,115.22],
+  ['Bangkok',13.76,100.50],['Chiang Mai',18.79,98.98],['Phuket',7.88,98.39],
+  ['Manila',14.60,120.98],['Cebu',10.32,123.89],
+  ['Hanoi',21.03,105.85],['Ho Chi Minh City',10.82,106.63],['Da Nang',16.05,108.20],
+  ['Yangon',16.87,96.20],['Phnom Penh',11.56,104.92],['Vientiane',17.97,102.63],
+  ['Dhaka',23.81,90.41],['Chittagong',22.36,91.78],['Colombo',6.93,79.85],
+  ['Karachi',24.86,67.01],['Lahore',31.55,74.34],['Islamabad',33.68,73.05],
+  ['Mumbai',19.08,72.88],['Delhi',28.61,77.21],['Bengaluru',12.97,77.59],
+  ['Chennai',13.08,80.27],['Hyderabad',17.39,78.49],['Kolkata',22.57,88.36],
+  ['Pune',18.52,73.86],['Ahmedabad',23.02,72.57],['Kathmandu',27.72,85.32],
+  ['Almaty',43.24,76.89],['Astana',51.17,71.43],['Tashkent',41.30,69.24],
+  ['Bishkek',42.87,74.59],['Dushanbe',38.56,68.79],['Ulaanbaatar',47.89,106.91],
+  ['Vladivostok',43.12,131.89]
+];
+const EU = [
+  ['London',51.51,-0.13],['Manchester',53.48,-2.24],['Birmingham',52.49,-1.89],
+  ['Edinburgh',55.95,-3.19],['Glasgow',55.86,-4.25],['Leeds',53.80,-1.55],['Dublin',53.35,-6.26],
+  ['Paris',48.86,2.35],['Marseille',43.30,5.37],['Lyon',45.76,4.84],['Toulouse',43.60,1.44],['Nice',43.70,7.27],
+  ['Frankfurt',50.11,8.68],['Munich',48.14,11.58],['Berlin',52.52,13.40],['Hamburg',53.55,9.99],
+  ['D\u00fcsseldorf',51.23,6.78],['Cologne',50.94,6.96],['Stuttgart',48.78,9.18],['Leipzig',51.34,12.37],
+  ['Amsterdam',52.37,4.90],['Rotterdam',51.92,4.48],
+  ['Brussels',50.85,4.35],['Antwerp',51.22,4.40],
+  ['Zurich',47.38,8.54],['Geneva',46.20,6.14],['Vienna',48.21,16.37],
+  ['Madrid',40.42,-3.70],['Barcelona',41.39,2.17],['Valencia',39.47,-0.38],['Seville',37.39,-5.99],['Bilbao',43.26,-2.93],
+  ['Lisbon',38.72,-9.14],['Porto',41.15,-8.61],
+  ['Milan',45.46,9.19],['Rome',41.90,12.50],['Turin',45.07,7.69],['Naples',40.85,14.27],
+  ['Palermo',38.12,13.36],['Venice',45.44,12.32],
+  ['Copenhagen',55.68,12.57],['Stockholm',59.33,18.07],['Gothenburg',57.71,11.97],
+  ['Oslo',59.91,10.75],['Bergen',60.39,5.32],['Helsinki',60.17,24.94],['Reykjavik',64.15,-21.94],
+  ['Tallinn',59.44,24.75],['Riga',56.95,24.11],['Vilnius',54.69,25.28],
+  ['Warsaw',52.23,21.01],['Krak\u00f3w',50.06,19.94],['Gda\u0144sk',54.35,18.65],
+  ['Prague',50.08,14.44],['Brno',49.20,16.61],['Budapest',47.50,19.04],
+  ['Bucharest',44.43,26.10],['Cluj-Napoca',46.77,23.60],['Sofia',42.70,23.32],
+  ['Athens',37.98,23.73],['Thessaloniki',40.64,22.94],
+  ['Belgrade',44.79,20.45],['Zagreb',45.81,15.98],['Ljubljana',46.06,14.51],['Sarajevo',43.86,18.41],
+  ['Bratislava',48.15,17.11],
+  ['Kyiv',50.45,30.52],['Odesa',46.48,30.73],['Lviv',49.84,24.03],
+  ['Minsk',53.90,27.57],['Moscow',55.76,37.62],['St. Petersburg',59.93,30.34],['Novosibirsk',55.03,82.92],
+  ['Chi\u0219in\u0103u',47.01,28.86],['Luxembourg',49.61,6.13]
+];
+const SA = [
+  ['S\u00e3o Paulo',-23.55,-46.63],['Rio de Janeiro',-22.91,-43.17],['Buenos Aires',-34.60,-58.38],
+  ['Santiago',-33.45,-70.67],['Lima',-12.05,-77.04],['Bogot\u00e1',4.71,-74.07],
+  ['Medell\u00edn',6.24,-75.58],['Cali',3.45,-76.53],['Caracas',10.48,-66.90],
+  ['Quito',-0.18,-78.47],['Guayaquil',-2.19,-79.89],['Montevideo',-34.90,-56.16],
+  ['Asunci\u00f3n',-25.28,-57.63],['La Paz',-16.50,-68.15],['Santa Cruz',-17.78,-63.18],
+  ['Bras\u00edlia',-15.79,-47.88],['Fortaleza',-3.73,-38.53],['Salvador',-12.97,-38.50],
+  ['Recife',-8.05,-34.88],['Porto Alegre',-30.03,-51.23],['Bel\u00e9m',-1.46,-48.50],
+  ['Manaus',-3.12,-60.02],['C\u00f3rdoba',-31.42,-64.18],['Rosario',-32.95,-60.64],
+  ['Valpara\u00edso',-33.05,-71.62]
+];
+const AF = [
+  ['Cairo',30.04,31.24],['Alexandria',31.20,29.92],['Lagos',6.52,3.38],['Abuja',9.06,7.49],
+  ['Kano',12.00,8.52],['Accra',5.60,-0.19],['Nairobi',-1.29,36.82],['Mombasa',-4.04,39.67],
+  ['Johannesburg',-26.20,28.05],['Cape Town',-33.92,18.42],['Durban',-29.86,31.02],['Pretoria',-25.75,28.19],
+  ['Casablanca',33.57,-7.59],['Rabat',34.02,-6.84],['Marrakesh',31.63,-7.99],
+  ['Algiers',36.75,3.06],['Tunis',36.81,10.18],['Tripoli',32.89,13.19],
+  ['Addis Ababa',9.01,38.75],['Dar es Salaam',-6.79,39.21],['Kampala',0.35,32.58],['Kigali',-1.94,30.06],
+  ['Dakar',14.72,-17.47],['Abidjan',5.36,-4.01],['Bamako',12.64,-8.00],['Ouagadougou',12.37,-1.52],
+  ['Luanda',-8.84,13.23],['Kinshasa',-4.44,15.27],['Harare',-17.83,31.05],['Lusaka',-15.39,28.32],
+  ['Maputo',-25.97,32.57],['Khartoum',15.50,32.56],['Djibouti',11.57,43.15],
+  ['Port Louis',-20.16,57.50],['Antananarivo',-18.88,47.51]
+];
+const ME = [
+  ['Dubai',25.20,55.27],['Abu Dhabi',24.45,54.38],['Sharjah',25.35,55.39],
+  ['Doha',25.29,51.53],['Riyadh',24.71,46.68],['Jeddah',21.49,39.19],['Dammam',26.42,50.09],
+  ['Kuwait City',29.38,47.99],['Manama',26.23,50.59],['Muscat',23.59,58.41],
+  ['Tel Aviv',32.09,34.78],['Jerusalem',31.77,35.21],['Amman',31.95,35.93],['Beirut',33.89,35.50],
+  ['Baghdad',33.31,44.37],['Erbil',36.19,44.01],['Tehran',35.69,51.39],['Mashhad',36.30,59.61],
+  ['Istanbul',41.01,28.98],['Ankara',39.93,32.86],['Izmir',38.42,27.14],
+  ['Baku',40.41,49.87],['Tbilisi',41.72,44.79],['Yerevan',40.18,44.51]
+];
+const OC = [
+  ['Sydney',-33.87,151.21],['Melbourne',-37.81,144.96],['Brisbane',-27.47,153.03],
+  ['Perth',-31.95,115.86],['Adelaide',-34.93,138.60],['Canberra',-35.28,149.13],
+  ['Gold Coast',-28.00,153.43],['Darwin',-12.46,130.84],['Hobart',-42.88,147.33],['Cairns',-16.92,145.77],
+  ['Auckland',-36.85,174.76],['Wellington',-41.29,174.78],['Christchurch',-43.53,172.64],['Queenstown',-45.03,168.66],
+  ['Suva',-18.14,178.44],['Port Moresby',-9.44,147.18],['Noum\u00e9a',-22.28,166.46],['Papeete',-17.55,-149.57]
+];
+
+const CITIES = [];
+[NA, AP, EU, SA, AF, ME, OC].forEach((arr, ri) =>
+  arr.forEach(([name, lat, lon]) => CITIES.push({ name, lat, lon, region: ri })));
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const R = 100;
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function latLonToVec3(lat, lon, r = R) {
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+const fmtLat = v => Math.abs(v).toFixed(2) + '\u00b0 ' + (v >= 0 ? 'N' : 'S');
+const fmtLon = v => Math.abs(v).toFixed(2) + '\u00b0 ' + (v >= 0 ? 'E' : 'W');
+const $ = id => document.getElementById(id);
+
+/* ============================================================
+   RENDERER / SCENE / CAMERA
+   ============================================================ */
+const container = $('container');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x04060c, 1);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 12000);
+camera.position.set(0, 150, 640);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.enablePan = false;
+controls.minDistance = 145;
+controls.maxDistance = 900;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+
+const uTime = { value: 0 };
+const uPR  = { value: renderer.getPixelRatio() };
+const SUN  = new THREE.Vector3(-0.85, 0.4, 0.6).normalize();
+
+/* ============================================================
+   PROCEDURAL FALLBACK TEXTURES (used until/if CDN textures load)
+   ============================================================ */
+function buildProceduralTextures() {
+  const W = 512, H = 256, G = 64, GH = 32;
+  const rnd = mulberry32(1337);
+  const grid = new Float32Array(G * GH);
+  for (let i = 0; i < G * GH; i++) grid[i] = rnd();
+  const sm = t => t * t * (3 - 2 * t);
+  function noise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const x0 = ((xi % G) + G) % G, x1 = (x0 + 1) % G;
+    const y0 = Math.min(GH - 1, Math.max(0, yi)), y1 = Math.min(GH - 1, y0 + 1);
+    const a = grid[y0 * G + x0], b = grid[y0 * G + x1], c = grid[y1 * G + x0], d = grid[y1 * G + x1];
+    return a + (b - a) * sm(xf) + (c - a) * sm(yf) + (a - b - c + d) * sm(xf) * sm(yf);
+  }
+  function fbm(u, v) {
+    let s = 0, amp = 0.53, f = 1;
+    for (let o = 0; o < 5; o++) {
+      s += amp * noise(((u * f) % G + G) % G, Math.min(GH - 0.001, v * f));
+      amp *= 0.5; f *= 2;
+    }
+    return s;
+  }
+  const land = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    const la = 90 - (y + 0.5) / H * 180, py = (y / H) * GH;
+    for (let x = 0; x < W; x++) {
+      land[y * W + x] = fbm(((x + 0.5) / W) * G, py) + 0.10 * Math.cos(la * Math.PI / 90);
+    }
+  }
+  function mkCanvas(fill) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    fill(img.data);
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+  const dayC = mkCanvas(d => {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, e = land[y * W + x];
+      const la = Math.abs(90 - (y + 0.5) / H * 180);
+      let r, g, b;
+      if (la > 72) { r = 222; g = 230; b = 238; }
+      else if (e > 0.55) {
+        const t = Math.min(1, (e - 0.55) / 0.25);
+        r = 52 + 92 * t; g = 96 + 42 * t; b = 52;
+      } else {
+        const t = e / 0.55;
+        r = 8 + 18 * (1 - t); g = 28 + 34 * (1 - t); b = 62 + 54 * (1 - t);
+      }
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
+    }
+  });
+  const nightC = mkCanvas(d => {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, e = land[y * W + x];
+      const la = Math.abs(90 - (y + 0.5) / H * 180);
+      let r = 5, g = 9, b = 20;
+      if (la < 62 && e > 0.55 && ((x * 37 + y * 101) % 997) < 26) {
+        const s = 0.5 + 0.5 * Math.sin(x * 12.9898 + y * 78.233);
+        r = 210 * s + 45; g = 140 * s + 30; b = 60 * s;
+      }
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
+    }
+  });
+  const waterC = mkCanvas(d => {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, e = land[y * W + x];
+      const la = Math.abs(90 - (y + 0.5) / H * 180);
+      const w = (e <= 0.55 && la <= 72) ? 255 : 0;
+      d[i] = w; d[i + 1] = w; d[i + 2] = w; d[i + 3] = 255;
+    }
+  });
+  const cloudC = mkCanvas(d => {
+    for (let y = 0; y < H; y++) {
+      const py = ((y + 11.3) / H) * GH;
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        const f = fbm((((x + 0.5) / W + 0.37) * G) % G, py);
+        const a = Math.max(0, Math.min(1, (f - 0.52) * 4.2)) * 235;
+        d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; d[i + 3] = a;
+      }
+    }
+  });
+  const tex = c => {
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = THREE.RepeatWrapping;
+    return t;
+  };
+  return { day: tex(dayC), night: tex(nightC), water: tex(waterC), clouds: tex(cloudC) };
+}
+const fallbackTex = buildProceduralTextures();
+
+/* ============================================================
+   TEXTURE LOADING (CDN with graceful fallback)
+   ============================================================ */
+const texLoader = new THREE.TextureLoader();
+let texturesDone = 0;
+const TEXTURE_TOTAL = 4;
+let loadFinished = false;
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+
+function texProgress() {
+  texturesDone++;
+  const p = Math.min(1, texturesDone / TEXTURE_TOTAL);
+  $('loadBar').style.width = (p * 100).toFixed(0) + '%';
+  $('loadPct').textContent = (p * 100).toFixed(0) + '%';
+  if (texturesDone >= TEXTURE_TOTAL) finishLoad();
+}
+function finishLoad() {
+  if (loadFinished) return;
+  loadFinished = true;
+  $('loadBar').style.width = '100%';
+  $('loadPct').textContent = '100%';
+  setTimeout(() => {
+    $('loader').classList.add('done');
+    intro = { t: 0, from: camera.position.clone(), to: new THREE.Vector3(0, 42, 360) };
+  }, 350);
+}
+setTimeout(finishLoad, 9000);
+
+function loadTex(urls, apply) {
+  const attempt = i => {
+    if (i >= urls.length) { texProgress(); return; }
+    texLoader.load(urls[i],
+      t => { t.anisotropy = Math.min(8, maxAniso); apply(t); texProgress(); },
+      undefined,
+      () => attempt(i + 1));
+  };
+  attempt(0);
+}
+const TG = 'https://unpkg.com/three-globe/example/img/';
+const TGJ = 'https://cdn.jsdelivr.net/npm/three-globe/example/img/';
+loadTex([TG + 'earth-blue-marble.jpg', TGJ + 'earth-blue-marble.jpg'], t => { earthUniforms.dayMap.value = t; });
+loadTex([TG + 'earth-night.jpg', TGJ + 'earth-night.jpg'], t => { earthUniforms.nightMap.value = t; });
+loadTex([TG + 'earth-water.png', TGJ + 'earth-water.png'], t => { earthUniforms.waterMap.value = t; });
+loadTex(
+  ['https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/fair_clouds_4k.png',
+   'https://raw.githubusercontent.com/turban/webgl-earth/master/images/fair_clouds_4k.png'],
+  t => { cloudMat.map = t; cloudMat.needsUpdate = true; });
+
+/* ============================================================
+   EARTH (custom day/night shader) + ATMOSPHERE + CLOUDS
+   ============================================================ */
+const earthUniforms = {
+  dayMap:   { value: fallbackTex.day },
+  nightMap: { value: fallbackTex.night },
+  waterMap: { value: fallbackTex.water },
+  sunDir:   { value: SUN },
+  atmColor: { value: new THREE.Color(0x4d9fff) }
+};
+const earthMat = new THREE.ShaderMaterial({
+  uniforms: earthUniforms,
+  vertexShader: `
+    varying vec2 vUv; varying vec3 vN; varying vec3 vWp;
+    void main(){
+      vUv = uv;
+      vN = normalize(mat3(modelMatrix) * normal);
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWp = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: `
+    uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D waterMap;
+    uniform vec3 sunDir; uniform vec3 atmColor;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vWp;
+    void main(){
+      vec3 n = normalize(vN);
+      vec3 viewDir = normalize(cameraPosition - vWp);
+      float sd = dot(n, sunDir);
+      vec3 day = texture2D(dayMap, vUv).rgb;
+      vec3 night = texture2D(nightMap, vUv).rgb;
+      float water = texture2D(waterMap, vUv).r;
+      float dayMix = smoothstep(-0.12, 0.32, sd);
+      vec3 dayCol = day * (0.22 + 1.25 * clamp(sd, 0.0, 1.0));
+      vec3 h = normalize(sunDir + viewDir);
+      float spec = pow(max(dot(n, h), 0.0), 48.0) * water;
+      dayCol += vec3(1.0, 0.98, 0.9) * spec * 0.85 * dayMix;
+      vec3 nightCol = night * vec3(1.5, 1.25, 0.95) + vec3(0.012, 0.02, 0.05);
+      float twil = smoothstep(-0.18, 0.02, sd) * (1.0 - smoothstep(0.02, 0.28, sd));
+      vec3 col = mix(nightCol, dayCol, dayMix);
+      col += vec3(0.95, 0.42, 0.18) * twil * 0.22;
+      float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0);
+      col += atmColor * fres * (0.14 + 0.38 * dayMix);
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
+const earth = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 96), earthMat);
+scene.add(earth);
+
+const atmoMat = new THREE.ShaderMaterial({
+  uniforms: { atmColor: earthUniforms.atmColor, sunDir: { value: SUN } },
+  vertexShader: `
+    varying vec3 vN; varying vec3 vWp;
+    void main(){
+      vN = normalize(mat3(modelMatrix) * normal);
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWp = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: `
+    uniform vec3 atmColor; uniform vec3 sunDir;
+    varying vec3 vN; varying vec3 vWp;
+    void main(){
+      vec3 n = normalize(vN);
+      vec3 v = normalize(cameraPosition - vWp);
+      float d = dot(n, v);
+      float glow = pow(0.68 - d, 4.0) * smoothstep(0.0, 0.5, -d);
+      glow = min(glow, 1.1);
+      float sunFace = 0.55 + 0.45 * clamp(dot(n, sunDir) * 0.5 + 0.5, 0.0, 1.0);
+      gl_FragColor = vec4(atmColor * glow * 0.75 * sunFace, 1.0);
+    }`,
+  side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false
+});
+const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(R * 1.13, 64, 64), atmoMat);
+atmosphere.renderOrder = 2;
+scene.add(atmosphere);
+
+const cloudUniforms = { map: { value: fallbackTex.clouds }, sunDir: { value: SUN } };
+const cloudMat = new THREE.ShaderMaterial({
+  uniforms: cloudUniforms,
+  vertexShader: `
+    varying vec2 vUv; varying vec3 vN;
+    void main(){
+      vUv = uv;
+      vN = normalize(mat3(modelMatrix) * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    uniform sampler2D map; uniform vec3 sunDir;
+    varying vec2 vUv; varying vec3 vN;
+    void main(){
+      vec4 t = texture2D(map, vUv);
+      float sd = dot(normalize(vN), sunDir);
+      float light = 0.08 + 1.15 * clamp(sd, 0.0, 1.0);
+      gl_FragColor = vec4(vec3(light), t.a * 0.7);
+    }`,
+  transparent: true, depthWrite: false
+});
+const clouds = new THREE.Mesh(new THREE.SphereGeometry(R * 1.012, 64, 64), cloudMat);
+scene.add(clouds);
+
+/* ============================================================
+   STARFIELD
+   ============================================================ */
+{
+  const N = 2600;
+  const pos = new Float32Array(N * 3), size = new Float32Array(N),
+        ph = new Float32Array(N), col = new Float32Array(N * 3);
+  const rng = mulberry32(99);
+  const c1 = new THREE.Color(0xcfe2ff), c2 = new THREE.Color(0xffe8c9), c3 = new THREE.Color(0x9fc4ff);
+  for (let i = 0; i < N; i++) {
+    const v = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize()
+      .multiplyScalar(2600 + rng() * 1800);
+    pos.set([v.x, v.y, v.z], i * 3);
+    size[i] = 0.6 + Math.pow(rng(), 2.5) * 2.4;
+    ph[i] = rng() * Math.PI * 2;
+    const cc = rng() < 0.82 ? c1 : (rng() < 0.5 ? c2 : c3);
+    col.set([cc.r, cc.g, cc.b], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  g.setAttribute('aPh', new THREE.BufferAttribute(ph, 1));
+  g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uTime, uPR },
+    vertexShader: `
+      attribute float aSize; attribute float aPh; attribute vec3 aColor;
+      uniform float uPR; varying vec3 vC; varying float vPh;
+      void main(){
+        vC = aColor; vPh = aPh;
+        gl_PointSize = aSize * uPR;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uTime; varying vec3 vC; varying float vPh;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.05, d);
+        float tw = 0.72 + 0.28 * sin(uTime * (0.6 + fract(vPh) * 1.2) + vPh * 7.0);
+        gl_FragColor = vec4(vC, a * tw);
+      }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  scene.add(new THREE.Points(g, m));
+}
+
+/* ============================================================
+   CITY MARKERS + GLOW
+   ============================================================ */
+const cityPos = CITIES.map(c => latLonToVec3(c.lat, c.lon, R * 1.008));
+const baseColors = new Float32Array(CITIES.length * 3);
+const tmpColor = new THREE.Color();
+
+const markers = new THREE.InstancedMesh(
+  new THREE.SphereGeometry(0.7, 10, 10),
+  new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  CITIES.length
+);
+const m4 = new THREE.Matrix4();
+CITIES.forEach((c, i) => {
+  tmpColor.set(REGIONS[c.region].color);
+  baseColors.set([tmpColor.r, tmpColor.g, tmpColor.b], i * 3);
+  markers.setColorAt(i, tmpColor);
+  m4.makeScale(1, 1, 1);
+  m4.setPosition(cityPos[i]);
+  markers.setMatrixAt(i, m4);
+});
+markers.instanceMatrix.needsUpdate = true;
+scene.add(markers);
+
+const glowColors = baseColors.slice();
+const glowPhases = new Float32Array(CITIES.length);
+{
+  const rng = mulberry32(5);
+  for (let i = 0; i < CITIES.length; i++) glowPhases[i] = rng() * Math.PI * 2;
+}
+const glowGeo = new THREE.BufferGeometry();
+{
+  const p = new Float32Array(CITIES.length * 3);
+  CITIES.forEach((c, i) => {
+    const v = cityPos[i].clone().normalize().multiplyScalar(R * 1.012);
+    p.set([v.x, v.y, v.z], i * 3);
+  });
+  glowGeo.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  glowGeo.setAttribute('aColor', new THREE.BufferAttribute(glowColors, 3).setUsage(THREE.DynamicDrawUsage));
+  glowGeo.setAttribute('aPhase', new THREE.BufferAttribute(glowPhases, 1));
+}
+const glowMat = new THREE.ShaderMaterial({
+  uniforms: { uTime, uPR },
+  vertexShader: `
+    attribute vec3 aColor; attribute float aPhase;
+    uniform float uTime; uniform float uPR;
+    varying vec3 vC; varying float vPh;
+    void main(){
+      vC = aColor; vPh = aPhase;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      float pulse = 1.0 + 0.35 * sin(uTime * 2.2 + aPhase);
+      gl_PointSize = 15.0 * pulse * uPR * (240.0 / -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform float uTime; varying vec3 vC; varying float vPh;
+    void main(){
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.0, d);
+      a *= a;
+      float tw = 0.75 + 0.25 * sin(uTime * 2.2 + vPh);
+      gl_FragColor = vec4(vC * a * 0.85 * tw, a * 0.85 * tw);
+    }`,
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+});
+const glow = new THREE.Points(glowGeo, glowMat);
+scene.add(glow);
+
+/* ============================================================
+   ARCS (routes) + FLOWING PACKETS
+   ============================================================ */
+const HUB_NAMES = [
+  'New York','Miami','Los Angeles','Dallas','Chicago','Seattle','Toronto','Mexico City','Panama City',
+  'S\u00e3o Paulo','Buenos Aires','Santiago','Bogot\u00e1','Lima',
+  'London','Amsterdam','Frankfurt','Paris','Madrid','Stockholm','Warsaw','Istanbul','Moscow',
+  'Cairo','Lagos','Nairobi','Johannesburg','Dubai','Tel Aviv','Riyadh',
+  'Singapore','Hong Kong','Tokyo','Osaka','Seoul','Mumbai','Delhi','Jakarta','Bangkok','Manila',
+  'Sydney','Auckland'
+];
+const hubIdx = HUB_NAMES.map(n => CITIES.findIndex(c => c.name === n)).filter(i => i >= 0);
+const rngA = mulberry32(20240612);
+const usedPairs = new Set();
+const arcs = [];
+const edges = new Uint8Array(CITIES.length);
+for (const h of hubIdx) {
+  const k = 3 + Math.floor(rngA() * 2);
+  let made = 0, tries = 0;
+  while (made < k && tries < 50) {
+    tries++;
+    let t;
+    if (rngA() < 0.65) t = hubIdx[Math.floor(rngA() * hubIdx.length)];
+    else t = Math.floor(rngA() * CITIES.length);
+    if (t === h) continue;
+    const key = Math.min(h, t) + '-' + Math.max(h, t);
+    if (usedPairs.has(key)) continue;
+    const ang = cityPos[h].angleTo(cityPos[t]);
+    if (ang < 0.18) continue;
+    if (CITIES[h].region === CITIES[t].region && rngA() < 0.5) continue;
+    usedPairs.add(key);
+    made++; edges[h]++; edges[t]++;
+    arcs.push([h, t]);
+  }
+}
+
+const SEG = 48;
+const arcPts = [];
+{
+  const p0 = new THREE.Vector3(), p2 = new THREE.Vector3(), ctrl = new THREE.Vector3(),
+        mid = new THREE.Vector3(), curve = new THREE.QuadraticBezierCurve3();
+  for (const [h, t] of arcs) {
+    p0.copy(cityPos[h]); p2.copy(cityPos[t]);
+    const ang = p0.angleTo(p2);
+    mid.addVectors(p0, p2).normalize();
+    const peak = R * (1.055 + 0.17 * (ang / Math.PI));
+    ctrl.copy(mid).multiplyScalar(2 * peak - R * Math.cos(ang / 2));
+    curve.v0.copy(p0); curve.v1.copy(ctrl); curve.v2.copy(p2);
+    const pts = curve.getPoints(SEG);
+    for (const p of pts) {
+      const l = p.length();
+      if (l < R * 1.015) p.multiplyScalar(R * 1.015 / l);
+    }
+    const flat = new Float32Array((SEG + 1) * 3);
+    pts.forEach((p, i) => flat.set([p.x, p.y, p.z], i * 3));
+    arcPts.push(flat);
+  }
+}
+function arcPoint(ai, t, out) {
+  const arr = arcPts[ai];
+  const f = Math.max(0, Math.min(1, t)) * SEG;
+  const i = Math.min(SEG - 1, Math.floor(f));
+  const u = f - i;
+  const a = i * 3, b = (i + 1) * 3;
+  out.set(
+    arr[a] + (arr[b] - arr[a]) * u,
+    arr[a + 1] + (arr[b + 1] - arr[a + 1]) * u,
+    arr[a + 2] + (arr[b + 2] - arr[a + 2]) * u
+  );
+  return out;
+}
+
+/* merged line segments for all arcs */
+{
+  const colA = new THREE.Color(), colB = new THREE.Color();
+  const total = arcs.length * SEG * 2;
+  const lpos = new Float32Array(total * 3);
+  const lcol = new Float32Array(total * 3);
+  const lalp = new Float32Array(total);
+  let o = 0;
+  arcs.forEach(([h, t], ai) => {
+    const pts = arcPts[ai];
+    colA.set(REGIONS[CITIES[h].region].color);
+    colB.set(REGIONS[CITIES[t].region].color);
+    const baseA = 0.15 + rngA() * 0.18;
+    for (let s = 0; s < SEG; s++) {
+      const v = [[s, s / SEG], [s + 1, (s + 1) / SEG]];
+      for (const [idx, tt] of v) {
+        lpos[o * 3] = pts[idx * 3]; lpos[o * 3 + 1] = pts[idx * 3 + 1]; lpos[o * 3 + 2] = pts[idx * 3 + 2];
+        tmpColor.copy(colA).lerp(colB, tt);
+        lcol[o * 3] = tmpColor.r; lcol[o * 3 + 1] = tmpColor.g; lcol[o * 3 + 2] = tmpColor.b;
+        lalp[o] = Math.pow(Math.sin(Math.PI * tt), 0.65) * baseA;
+        o++;
+      }
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
+  g.setAttribute('aColor', new THREE.BufferAttribute(lcol, 3));
+  g.setAttribute('aAlpha', new THREE.BufferAttribute(lalp, 1));
+  const lineMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: `
+      attribute vec3 aColor; attribute float aAlpha;
+      varying vec3 vC; varying float vA;
+      void main(){
+        vC = aColor; vA = aAlpha;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uOpacity; varying vec3 vC; varying float vA;
+      void main(){ gl_FragColor = vec4(vC, vA * uOpacity); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  scene.add(new THREE.LineSegments(g, lineMat));
+  window.__lineMat = lineMat;
+}
+
+/* packets — head + 3-point trail per packet, single Points object */
+const TRAIL = 4;
+const TRAIL_OFF = [0, 0.016, 0.032, 0.05];
+const packets = [];
+{
+  const rng = mulberry32(777);
+  for (let ai = 0; ai < arcs.length; ai++) {
+    for (let p = 0; p < 2; p++) {
+      packets.push({ arc: ai, speed: 0.10 + rng() * 0.14, phase: rng(), mix: 0.3 + rng() * 0.5 });
+    }
+  }
+}
+const PK = packets.length;
+const pkPos = new Float32Array(PK * TRAIL * 3);
+const pkSize = new Float32Array(PK * TRAIL);
+const pkAlpha = new Float32Array(PK * TRAIL);
+const pkCol = new Float32Array(PK * TRAIL * 3);
+{
+  const sz = [8.5, 5.5, 4.0, 3.0], al = [0.95, 0.5, 0.3, 0.16];
+  const ca = new THREE.Color(), cb = new THREE.Color();
+  packets.forEach((p, i) => {
+    ca.set(REGIONS[CITIES[arcs[p.arc][0]].region].color);
+    cb.set(REGIONS[CITIES[arcs[p.arc][1]].region].color);
+    tmpColor.copy(ca).lerp(cb, p.mix);
+    for (let k = 0; k < TRAIL; k++) {
+      const j = i * TRAIL + k;
+      pkSize[j] = sz[k];
+      pkAlpha[j] = al[k];
+      pkCol.set([tmpColor.r, tmpColor.g, tmpColor.b], j * 3);
+    }
+  });
+}
+const pkGeo = new THREE.BufferGeometry();
+pkGeo.setAttribute('position', new THREE.BufferAttribute(pkPos, 3).setUsage(THREE.DynamicDrawUsage));
+pkGeo.setAttribute('aSize', new THREE.BufferAttribute(pkSize, 1));
+pkGeo.setAttribute('aAlpha', new THREE.BufferAttribute(pkAlpha, 1));
+pkGeo.setAttribute('aColor', new THREE.BufferAttribute(pkCol, 3));
+const pkMat = new THREE.ShaderMaterial({
+  uniforms: { uTime, uPR },
+  vertexShader: `
+    attribute float aSize; attribute float aAlpha; attribute vec3 aColor;
+    uniform float uPR; varying vec3 vC; varying float vA;
+    void main(){
+      vC = aColor; vA = aAlpha;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize * uPR * (240.0 / -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    varying vec3 vC; varying float vA;
+    void main(){
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.02, d) * vA;
+      gl_FragColor = vec4(vC, a);
+    }`,
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+});
+const packetPoints = new THREE.Points(pkGeo, pkMat);
+scene.add(packetPoints);
+
+/* ============================================================
+   INTERACTION — hover / pin / region focus / camera fly-to
+   ============================================================ */
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points = { threshold: 2.4 };
+const pointerNDC = new THREE.Vector2(-2, -2);
+let pointerPx = { x: 0, y: 0 };
+let hoverIdx = -1, pinnedIdx = -1, focusRegion = -1;
+let downPos = null;
+let camTween = null;
+let intro = null;
+
+renderer.domElement.addEventListener('pointermove', e => {
+  pointerNDC.x = e.clientX / window.innerWidth * 2 - 1;
+  pointerNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  pointerPx = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('pointerleave', () => {
+  pointerNDC.set(-2, -2);
+  if (hoverIdx !== -1) {
+    hoverIdx = -1;
+    renderer.domElement.classList.remove('hovering');
+    controls.autoRotate = !paused;
+    updateCard(false);
+  }
+  updateTooltip(-1);
+});
+renderer.domElement.addEventListener('pointerdown', e => { downPos = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('click', () => {
+  if (downPos && Math.hypot(pointerPx.x - downPos.x, pointerPx.y - downPos.y) > 6) return;
+  if (hoverIdx >= 0) {
+    pinnedIdx = (pinnedIdx === hoverIdx) ? -1 : hoverIdx;
+    if (pinnedIdx >= 0) flyTo(cityPos[pinnedIdx]);
+  } else {
+    pinnedIdx = -1;
+  }
+  updateCard(true);
+});
+controls.addEventListener('start', () => { intro = null; camTween = null; });
+
+function flyTo(targetPos) {
+  const d = camera.position.length();
+  camTween = {
+    from: camera.position.clone(),
+    to: targetPos.clone().normalize().multiplyScalar(d),
+    t: 0
+  };
+}
+let lastScaled = [];
+function applyMarkerScales() {
+  const want = [];
+  if (hoverIdx >= 0) want.push(hoverIdx);
+  if (pinnedIdx >= 0 && pinnedIdx !== hoverIdx) want.push(pinnedIdx);
+  const same = want.length === lastScaled.length && want.every((v, i) => v === lastScaled[i]);
+  if (same) return;
+  for (const i of lastScaled) {
+    m4.makeScale(1, 1, 1);
+    m4.setPosition(cityPos[i]);
+    markers.setMatrixAt(i, m4);
+  }
+  for (const i of want) {
+    const k = (i === hoverIdx) ? 1.9 : 1.5;
+    m4.makeScale(k, k, k);
+    m4.setPosition(cityPos[i]);
+    markers.setMatrixAt(i, m4);
+  }
+  lastScaled = want;
+  markers.instanceMatrix.needsUpdate = true;
+}
+function applyFocus(f) {
+  focusRegion = f;
+  for (let i = 0; i < CITIES.length; i++) {
+    const on = (f < 0 || CITIES[i].region === f);
+    const m = on ? 1 : 0.15;
+    markers.instanceColor.setXYZ(i, baseColors[i * 3] * m, baseColors[i * 3 + 1] * m, baseColors[i * 3 + 2] * m);
+    glowColors[i * 3] = baseColors[i * 3] * m;
+    glowColors[i * 3 + 1] = baseColors[i * 3 + 1] * m;
+    glowColors[i * 3 + 2] = baseColors[i * 3 + 2] * m;
+  }
+  markers.instanceColor.needsUpdate = true;
+  glowGeo.attributes.aColor.needsUpdate = true;
+}
+
+/* ============================================================
+   UI — legend / stats / card / tooltip / pause / sparkline
+   ============================================================ */
+const regionCounts = REGIONS.map((r, i) => CITIES.filter(c => c.region === i).length);
+$('statCities').textContent = CITIES.length;
+$('statRoutes').textContent = arcs.length;
+$('statPackets').textContent = PK;
+
+const legendRows = $('legendRows');
+REGIONS.forEach((r, i) => {
+  const row = document.createElement('div');
+  row.className = 'lrow';
+  row.innerHTML =
+    '<span class="ldot" style="background:' + r.color + ';box-shadow:0 0 10px ' + r.color + '"></span>' +
+    '<span class="lname">' + r.name + '</span>' +
+    '<span class="lcount">' + regionCounts[i] + '</span>';
+  row.addEventListener('mouseenter', () => applyFocus(i));
+  row.addEventListener('mouseleave', () => applyFocus(-1));
+  legendRows.appendChild(row);
+});
+
+const tooltip = $('tooltip');
+let lastTipIdx = -2;
+function updateTooltip(idx) {
+  if (idx !== lastTipIdx) {
+    lastTipIdx = idx;
+    if (idx < 0) { tooltip.classList.remove('on'); return; }
+    const c = CITIES[idx], r = REGIONS[c.region];
+    tooltip.innerHTML =
+      '<div class="tName">' + c.name + '</div>' +
+      '<div class="tCoords">' + fmtLat(c.lat) + ' \u00b7 ' + fmtLon(c.lon) + '</div>' +
+      '<div class="tRegion"><span class="dot" style="background:' + r.color + '"></span>' + r.name + '</div>';
+    tooltip.classList.add('on');
+  }
+  const w = tooltip.offsetWidth, h = tooltip.offsetHeight;
+  let x = pointerPx.x + 16, y = pointerPx.y + 14;
+  if (x + w > window.innerWidth - 12) x = pointerPx.x - w - 16;
+  if (y + h > window.innerHeight - 12) y = pointerPx.y - h - 14;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top = y + 'px';
+}
+
+const el = { name: $('cName'), regionText: $('cRegionText'), rdot: $('cRdot'),
+             coords: $('cCoords'), edges: $('cEdges'), idx: $('cIdx'), pin: $('cPin') };
+let lastCardIdx = -2;
+function updateCard(force) {
+  const idx = hoverIdx >= 0 ? hoverIdx : pinnedIdx;
+  if (!force && idx === lastCardIdx) return;
+  lastCardIdx = idx;
+  if (idx < 0) {
+    el.name.textContent = '\u2014';
+    el.regionText.textContent = 'Hover a city marker on the globe';
+    el.rdot.style.display = 'none';
+    el.coords.textContent = '\u2014 \u00b7 \u2014';
+    el.edges.textContent = '\u2014';
+    el.idx.textContent = '\u2014';
+    el.pin.classList.remove('on');
+    return;
+  }
+  const c = CITIES[idx], r = REGIONS[c.region];
+  el.name.textContent = c.name;
+  el.regionText.textContent = r.name;
+  el.rdot.style.display = 'inline-block';
+  el.rdot.style.background = r.color;
+  el.rdot.style.boxShadow = '0 0 8px ' + r.color;
+  el.coords.textContent = fmtLat(c.lat) + ' \u00b7 ' + fmtLon(c.lon);
+  el.edges.textContent = edges[idx] + ' routes';
+  el.idx.textContent = '#' + String(idx).padStart(3, '0');
+  el.pin.classList.toggle('on', idx === pinnedIdx);
+}
+
+/* pause / resume */
+let paused = false;
+const pauseBtn = $('pauseBtn'), pauseLabel = $('pauseLabel'),
+      icoPause = $('icoPause'), icoPlay = $('icoPlay');
+function setPaused(v) {
+  paused = v;
+  controls.autoRotate = !v && hoverIdx < 0;
+  icoPause.style.display = v ? 'none' : '';
+  icoPlay.style.display = v ? '' : 'none';
+  pauseLabel.textContent = v ? 'Resume' : 'Pause';
+}
+pauseBtn.addEventListener('click', () => setPaused(!paused));
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); setPaused(!paused); }
+});
+
+/* sparkline */
+const spark = $('spark');
+const sctx = spark.getContext('2d');
+const sparkVals = Array.from({ length: 44 }, () => 25 + Math.random() * 45);
+function sizeSpark() {
+  const rect = spark.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  spark.width = Math.max(10, rect.width * dpr);
+  spark.height = Math.max(10, rect.height * dpr);
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+sizeSpark();
+function drawSpark() {
+  const w = spark.getBoundingClientRect().width, h = spark.getBoundingClientRect().height;
+  sctx.clearRect(0, 0, w, h);
+  const bw = w / sparkVals.length;
+  sparkVals.forEach((v, i) => {
+    const bh = (v / 100) * h;
+    sctx.fillStyle = 'rgba(56,200,240,' + (0.22 + (v / 100) * 0.6) + ')';
+    sctx.fillRect(i * bw, h - bh, Math.max(1.5, bw - 2), bh);
+  });
+}
+drawSpark();
+setInterval(() => {
+  if (paused) return;
+  const last = sparkVals[sparkVals.length - 1];
+  sparkVals.push(Math.max(12, Math.min(96, last + (Math.random() - 0.47) * 16)));
+  sparkVals.shift();
+  drawSpark();
+}, 420);
+
+/* ============================================================
+   RESIZE + MAIN LOOP
+   ============================================================ */
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  uPR.value = renderer.getPixelRatio();
+  sizeSpark();
+  drawSpark();
+});
+
+const clock = new THREE.Clock();
+const pv = new THREE.Vector3();
+const camN = new THREE.Vector3();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!paused) uTime.value += dt;
+  const T = uTime.value;
+
+  /* intro dolly */
+  if (intro) {
+    intro.t += dt / 1.9;
+    const e = 1 - Math.pow(1 - Math.min(intro.t, 1), 3);
+    camera.position.lerpVectors(intro.from, intro.to, e);
+    if (intro.t >= 1) intro = null;
+  }
+  /* camera fly-to tween */
+  if (camTween) {
+    camTween.t += dt / 0.9;
+    const e = 1 - Math.pow(1 - Math.min(camTween.t, 1), 3);
+    const d = THREE.MathUtils.lerp(camTween.from.length(), camTween.to.length(), e);
+    pv.lerpVectors(camTween.from, camTween.to, e).normalize().multiplyScalar(d);
+    camera.position.copy(pv);
+    if (camTween.t >= 1) camTween = null;
+  }
+  controls.update();
+
+  /* clouds drift */
+  if (!paused) clouds.rotation.y += dt * 0.006;
+
+  /* fade arc lines in after load */
+  window.__lineMat.uniforms.uOpacity.value +=
+    (loadFinished ? 1 : 0 - window.__lineMat.uniforms.uOpacity.value) * Math.min(1, dt * 1.6);
+
+  /* hover raycast */
+  if (pointerNDC.x > -1.5) {
+    raycaster.setFromCamera(pointerNDC, camera);
+    const hits = raycaster.intersectObject(glow);
+    camN.copy(camera.position).normalize();
+    let found = -1;
+    for (const h of hits) {
+      if (cityPos[h.index].clone().normalize().dot(camN) > 0.3) { found = h.index; break; }
+    }
+    if (found !== hoverIdx) {
+      hoverIdx = found;
+      renderer.domElement.classList.toggle('hovering', hoverIdx >= 0);
+      controls.autoRotate = !paused && hoverIdx < 0;
+      updateCard(false);
+    }
+    updateTooltip(hoverIdx);
+  }
+  applyMarkerScales();
+
+  /* packets flow */
+  if (!paused) {
+    for (let i = 0; i < PK; i++) {
+      const p = packets[i];
+      const raw = (T * p.speed + p.phase) % 1;
+      for (let k = 0; k < TRAIL; k++) {
+        const j = (i * TRAIL + k) * 3;
+        if (raw > 0.85) { pkPos[j] = 0; pkPos[j + 1] = 0; pkPos[j + 2] = 0; continue; }
+        const t = Math.max(raw / 0.85 - TRAIL_OFF[k], 0);
+        arcPoint(p.arc, t, pv);
+        pkPos[j] = pv.x; pkPos[j + 1] = pv.y; pkPos[j + 2] = pv.z;
+      }
+    }
+    pkGeo.attributes.position.needsUpdate = true;
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

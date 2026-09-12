@@ -1,0 +1,1882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Global data flow · Cloudflare Network</title>
+<meta name="description" content="Interactive 3D visualization of global network data flow" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+  :root{
+    --bg-0:#03050a;
+    --ink:#eef2f9;
+    --ink-dim:rgba(238,242,249,.72);
+    --ink-mute:rgba(238,242,249,.56);
+    --ink-faint:rgba(238,242,249,.44);
+    --line:rgba(255,255,255,.075);
+    --line-soft:rgba(255,255,255,.045);
+    --glass:linear-gradient(168deg,rgba(17,22,36,.72) 0%,rgba(8,11,20,.66) 100%);
+    --cf:#f6821f;
+    --r-na:#4c8dff;
+    --r-apac:#ff5c1a;
+    --r-eu:#b48cff;
+    --r-sa:#34d399;
+    --r-af:#ffd21e;
+    --r-me:#ff4fa3;
+    --r-oc:#22d3ee;
+    --ease:cubic-bezier(.22,.61,.36,1);
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none !important}
+  html,body{height:100%}
+  html{background:var(--bg-0)}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 820px at 50% 34%, #0a1223 0%, #050810 46%, #010205 100%),
+      var(--bg-0);
+    color:var(--ink);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'Helvetica Neue',Arial,sans-serif;
+    font-feature-settings:'tnum' 1,'cv11' 1,'ss01' 1;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  canvas{display:block}
+
+  #stage{position:fixed;inset:0;overflow:hidden}
+  #gl{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
+  #gl.dragging{cursor:grabbing}
+  #gl.pointing{cursor:pointer}
+
+  /* soft light-leak + vignette on top of the canvas */
+  .grading{position:absolute;inset:0;pointer-events:none;z-index:2}
+  .grading.vig{background:
+      radial-gradient(115% 95% at 50% 45%, rgba(0,0,0,0) 42%, rgba(0,0,0,.34) 78%, rgba(0,0,0,.62) 100%);
+  }
+  .grading.bloom{
+    background:
+      radial-gradient(48% 42% at 50% 47%, rgba(80,150,255,.075) 0%, rgba(80,150,255,0) 70%),
+      radial-gradient(30% 26% at 78% 12%, rgba(246,130,31,.05) 0%, rgba(246,130,31,0) 70%);
+    mix-blend-mode:screen;
+  }
+
+  .hud{position:absolute;inset:0;z-index:3;pointer-events:none}
+  .hud > *{pointer-events:auto}
+
+  .panel{
+    position:absolute;
+    background:var(--glass);
+    border:1px solid var(--line);
+    border-radius:18px;
+    backdrop-filter:blur(22px) saturate(150%);
+    -webkit-backdrop-filter:blur(22px) saturate(150%);
+    box-shadow:0 24px 70px -20px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.045);
+    opacity:0;
+    transform:translateY(10px);
+    animation:rise .9s var(--ease) .15s forwards;
+  }
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  /* ───────────────── left panel ───────────────── */
+  .left{
+    left:clamp(14px,2.2vw,30px); top:clamp(14px,2.2vw,30px);
+    width:min(324px,calc(100vw - 28px));
+    padding:18px 18px 16px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+  .logo{width:30px;height:30px;flex:0 0 auto;filter:drop-shadow(0 4px 12px rgba(246,130,31,.35))}
+  .brand-txt{display:flex;flex-direction:column;line-height:1.1;min-width:0}
+  .brand-name{font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  .brand-sub{font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-mute);margin-top:3px}
+  .live{
+    margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+    font-size:9px;letter-spacing:.16em;font-weight:600;color:var(--ink-dim);
+    padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.03);
+  }
+  .live i{width:5px;height:5px;border-radius:50%;background:#34d399;box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:ping 2.4s var(--ease) infinite}
+  .live.off i{background:#f59e0b;animation:none}
+  @keyframes ping{0%{box-shadow:0 0 0 0 rgba(52,211,153,.55)}70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+
+  h1{
+    margin:0 0 8px;
+    font-size:clamp(25px,2.5vw,31px);
+    line-height:1.03;
+    font-weight:600;
+    letter-spacing:-.028em;
+    background:linear-gradient(180deg,#ffffff 0%,#c3d2ea 62%,#8ea3c4 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{margin:0 0 16px;font-size:11.5px;line-height:1.55;color:var(--ink-mute);max-width:32ch}
+  .lede b{color:var(--ink-dim);font-weight:500}
+
+  .counts{
+    display:flex;align-items:baseline;gap:8px;margin:0 0 14px;
+    font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:11.5px;letter-spacing:.02em;color:var(--ink-dim);
+  }
+  .counts .sep{color:var(--ink-faint)}
+
+  .rule{height:1px;background:linear-gradient(90deg,var(--line),rgba(255,255,255,0));margin:0 0 14px}
+
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+  .stat{display:flex;flex-direction:column;gap:3px}
+  .stat .num{font-size:19px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .stat .lbl{font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-faint)}
+
+  .metrics{display:flex;flex-direction:column;gap:7px}
+  .metric{display:flex;align-items:center;justify-content:space-between;font-size:10.5px}
+  .metric .k{color:var(--ink-mute);letter-spacing:.02em}
+  .metric .v{
+    font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--ink);
+    font-variant-numeric:tabular-nums;
+  }
+  .metric .v.acc{color:#7fd1ff}
+
+  .hint{
+    margin-top:15px;padding-top:12px;border-top:1px solid var(--line-soft);
+    font-size:10px;letter-spacing:.04em;color:var(--ink-mute);line-height:1.75;
+  }
+  .hint kbd{
+    font-family:inherit;font-size:9px;padding:1px 5px;border-radius:4px;
+    border:1px solid var(--line);background:rgba(255,255,255,.035);color:var(--ink-mute);
+  }
+
+  /* ───────────────── right panel ───────────────── */
+  .right{
+    right:clamp(14px,2.2vw,30px); top:clamp(14px,2.2vw,30px);
+    width:min(304px,calc(100vw - 28px));
+    padding:16px 16px 14px;
+    animation-delay:.28s;
+  }
+  .sec{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
+  .sec-title{font-size:10px;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-dim);font-weight:500}
+  .sec-note{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-faint)}
+
+  .legend{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:2px}
+  .leg{
+    position:relative;display:flex;align-items:center;gap:9px;
+    padding:7px 8px;border-radius:9px;cursor:pointer;
+    transition:background .22s var(--ease),opacity .22s var(--ease);
+    overflow:hidden;
+  }
+  .leg::before{
+    content:'';position:absolute;left:0;top:0;bottom:0;width:var(--w,20%);
+    background:linear-gradient(90deg,color-mix(in srgb,var(--c) 16%,transparent),transparent 92%);
+    opacity:.5;transition:opacity .25s var(--ease);
+  }
+  .leg:hover{background:rgba(255,255,255,.045)}
+  .leg:hover::before{opacity:.9}
+  .leg .dot{position:relative;width:7px;height:7px;border-radius:50%;background:var(--c);box-shadow:0 0 9px var(--c);flex:0 0 auto}
+  .leg .nm{position:relative;font-size:11.5px;letter-spacing:.005em;color:var(--ink-dim);transition:color .2s var(--ease)}
+  .leg .ct{position:relative;margin-left:auto;font-family:'JetBrains Mono',Menlo,monospace;font-size:10px;color:var(--ink-mute)}
+  .leg[aria-pressed="true"]{background:rgba(255,255,255,.06)}
+  .leg[aria-pressed="true"] .nm{color:#fff}
+  .legend.dimmed .leg:not([aria-pressed="true"]){opacity:.38}
+
+  /* node card */
+  .node{
+    border:1px solid var(--line);border-radius:13px;padding:13px;
+    background:linear-gradient(170deg,rgba(255,255,255,.045),rgba(255,255,255,.012));
+    min-height:126px;transition:border-color .3s var(--ease),box-shadow .3s var(--ease);
+  }
+  .node.active{border-color:color-mix(in srgb,var(--c) 42%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--c) 16%,transparent),0 12px 34px -18px var(--c)}
+  .node-head{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .node-dot{width:8px;height:8px;border-radius:50%;background:var(--c,#5b6b86);box-shadow:0 0 10px var(--c,#5b6b86);flex:0 0 auto}
+  .node-name{font-size:14px;font-weight:500;letter-spacing:-.01em;line-height:1.15}
+  .node-region{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-mute);margin-top:3px}
+  .node-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;margin:0}
+  .node-grid div{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .node-grid dt{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-faint)}
+  .node-grid dd{margin:0;font-family:'JetBrains Mono',Menlo,monospace;font-size:11px;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .node-foot{
+    margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft);
+    display:flex;align-items:center;justify-content:space-between;
+    font-size:10px;color:var(--ink-mute);letter-spacing:.03em;
+  }
+  .node-foot b{color:var(--ink-dim);font-weight:500;font-family:'JetBrains Mono',Menlo,monospace}
+  .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:126px;gap:7px;text-align:center}
+  .empty svg{opacity:.3}
+  .empty p{margin:0;font-size:11px;color:var(--ink-mute);letter-spacing:.02em;line-height:1.65}
+
+  .disclaimer{margin-top:11px;font-size:9px;letter-spacing:.04em;color:var(--ink-faint);line-height:1.6}
+
+  /* ───────────────── tooltip ───────────────── */
+  .tip{
+    position:fixed;z-index:6;left:0;top:0;
+    padding:8px 11px;border-radius:10px;
+    background:linear-gradient(170deg,rgba(20,26,42,.9),rgba(9,12,21,.9));
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 16px 40px -14px rgba(0,0,0,.9);
+    backdrop-filter:blur(14px) saturate(150%);
+    -webkit-backdrop-filter:blur(14px) saturate(150%);
+    pointer-events:none;opacity:0;transform:translate3d(0,0,0) scale(.96);
+    transition:opacity .16s var(--ease),transform .16s var(--ease);
+    white-space:nowrap;
+  }
+  .tip.on{opacity:1;transform:translate3d(0,0,0) scale(1)}
+  .tip-name{font-size:12px;font-weight:500;letter-spacing:-.005em;display:flex;align-items:center;gap:7px}
+  .tip-name i{width:6px;height:6px;border-radius:50%;background:var(--c);box-shadow:0 0 8px var(--c)}
+  .tip-meta{
+    margin-top:4px;font-family:'JetBrains Mono',Menlo,monospace;
+    font-size:9.5px;color:var(--ink-mute);letter-spacing:.02em;display:flex;gap:8px;align-items:center;
+  }
+  .tip-meta span{white-space:nowrap}
+
+  /* ───────────────── controls ───────────────── */
+  .dock{
+    position:absolute;right:clamp(14px,2.2vw,30px);bottom:clamp(14px,2.2vw,30px);
+    display:flex;align-items:center;gap:9px;
+    opacity:0;animation:rise .9s var(--ease) .42s forwards;
+  }
+  .btn{
+    display:inline-flex;align-items:center;gap:9px;
+    height:42px;padding:0 17px 0 15px;border-radius:13px;cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:500;letter-spacing:.01em;color:var(--ink);
+    background:var(--glass);border:1px solid var(--line);
+    backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+    box-shadow:0 18px 46px -18px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.05);
+    transition:transform .2s var(--ease),border-color .2s var(--ease),background .2s var(--ease);
+  }
+  .btn:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.16);background:linear-gradient(168deg,rgba(26,33,52,.8),rgba(11,15,26,.72))}
+  .btn:active{transform:translateY(0) scale(.985)}
+  .btn svg{width:12px;height:12px;flex:0 0 auto}
+  .btn .i-play{display:none}
+  .btn.paused .i-pause{display:none}
+  .btn.paused .i-play{display:block}
+  .btn.paused{border-color:rgba(246,130,31,.34);color:#ffd7ad}
+
+  #tip,#gl,.hud{will-change:transform}
+
+  /* ───────────────── loader ───────────────── */
+  .loader{
+    position:fixed;inset:0;z-index:9;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;
+    background:radial-gradient(900px 600px at 50% 50%,#070b14,#020306 70%);
+    transition:opacity .8s var(--ease),visibility .8s;
+  }
+  .loader.gone{opacity:0;visibility:hidden}
+  .spin{width:34px;height:34px;border-radius:50%;border:1.5px solid rgba(255,255,255,.1);border-top-color:var(--cf);animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loader-txt{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--ink-mute)}
+  .loader-sub{font-size:9.5px;letter-spacing:.06em;color:rgba(238,242,249,.22);font-family:'JetBrains Mono',Menlo,monospace}
+
+  .fatal{max-width:520px;text-align:center;font-size:12px;line-height:1.7;color:var(--ink-dim);padding:24px}
+  .fatal code{font-family:'JetBrains Mono',Menlo,monospace;font-size:11px;color:#ffb27a}
+
+  @media (max-width:1080px){
+    .left{width:min(290px,calc(100vw - 28px))}
+    .right{width:min(272px,calc(100vw - 28px))}
+  }
+  @media (max-width:860px){
+    .right{display:none}
+    .hint{display:none}
+  }
+  @media (max-width:600px){
+    .left{width:calc(100vw - 24px);padding:15px}
+    .stats{grid-template-columns:repeat(3,1fr)}
+    .disclaimer{display:none}
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl"></canvas>
+  <div class="grading bloom"></div>
+  <div class="grading vig"></div>
+
+  <div class="hud">
+    <!-- ── left ── -->
+    <section class="panel left" id="panelLeft">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <defs><linearGradient id="cg" x1="10" y1="44" x2="54" y2="20" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#f6821f"/><stop offset="1" stop-color="#fbbf24"/></linearGradient></defs>
+          <path d="M42.5 42.5H19.2c-5.1 0-9.2-4-9.2-9 0-4.7 3.6-8.6 8.2-9 .9-3.9 4.4-6.8 8.5-6.8 4.5 0 8.3 3.4 8.9 7.8.5-.1 1-.2 1.6-.2 4.3 0 7.8 3.4 7.8 7.7 0 .4 0 .8-.1 1.2 3 .5 5.3 3.1 5.3 6.2 0 1.4-.5 2.8-1.3 3.9" stroke="url(#cg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="45" cy="45" r="3.2" fill="#f6821f"/>
+        </svg>
+        <div class="brand-txt">
+          <span class="brand-name">Cloudflare</span>
+          <span class="brand-sub">Network · Edge telemetry</span>
+        </div>
+        <span class="live" id="live"><i></i>LIVE</span>
+      </div>
+
+      <h1>Global data flow</h1>
+      <p class="lede">Traffic routed across the anycast edge, rendered node to node in real time.</p>
+
+      <p class="counts" id="counts">
+        <span id="countCities">308 cities</span><span class="sep">·</span><span id="countRegions">7 regions</span>
+      </p>
+
+      <div class="rule"></div>
+
+      <div class="stats">
+        <div class="stat"><span class="num" id="statCities">308</span><span class="lbl">Cities</span></div>
+        <div class="stat"><span class="num" id="statRegions">7</span><span class="lbl">Regions</span></div>
+        <div class="stat"><span class="num" id="statLinks">160</span><span class="lbl">Routes</span></div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><span class="k">Throughput</span><span class="v acc" id="mRps">—</span></div>
+        <div class="metric"><span class="k">p50 edge latency</span><span class="v" id="mLat">—</span></div>
+        <div class="metric"><span class="k">Active PoPs</span><span class="v" id="mPop">—</span></div>      </div>
+
+      <div class="hint">Drag to rotate · Scroll to zoom · Hover a node<br><kbd>Space</kbd> pause &nbsp; <kbd>R</kbd> reset view</div>
+    </section>
+
+    <!-- ── right ── -->
+    <aside class="panel right">
+      <div class="sec"><span class="sec-title">Regions</span><span class="sec-note">click to isolate</span></div>
+      <ul class="legend" id="legend"></ul>
+
+      <div class="sec"><span class="sec-title">Node detail</span><span class="sec-note" id="selNote">live</span></div>
+      <div class="node" id="node">
+        <div class="empty" id="nodeEmpty">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#eef2f9" stroke-width="1.4" stroke-linecap="round">
+            <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18M12 3c-2.6 3-2.6 15 0 18"/>
+          </svg>
+          <p>Hover a node on the globe<br>to inspect its edge site</p>
+        </div>
+        <div id="nodeBody" hidden>
+          <div class="node-head">
+            <span class="node-dot" id="nDot"></span>
+            <div style="min-width:0">
+              <div class="node-name" id="nName">—</div>
+              <div class="node-region" id="nRegion">—</div>
+            </div>
+          </div>
+          <dl class="node-grid">
+            <div><dt>Latitude</dt><dd id="nLat">—</dd></div>
+            <div><dt>Longitude</dt><dd id="nLon">—</dd></div>
+            <div><dt>Edge PoP</dt><dd id="nPop">—</dd></div>
+            <div><dt>Throughput</dt><dd id="nRps">—</dd></div>
+            <div><dt>Latency</dt><dd id="nMs">—</dd></div>
+            <div><dt>Uptime</dt><dd id="nUp">—</dd></div>
+          </dl>
+          <div class="node-foot"><span id="nRole">Edge node</span><b id="nRoutes">— routes</b></div>
+        </div>
+      </div>
+      <p class="disclaimer">Concept visualization · telemetry values are simulated for demonstration.</p>
+    </aside>
+
+    <!-- ── dock ── -->
+    <div class="dock">
+      <button class="btn" id="pauseBtn" type="button" aria-pressed="false">
+        <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>
+        <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.6c0-.9 1-1.5 1.8-1l8.4 5.3c.7.5.7 1.5 0 2L9.8 19.4c-.8.5-1.8-.1-1.8-1V5.6z"/></svg>
+        <span id="pauseTxt">Pause</span>
+      </button>
+    </div>
+
+    <div class="tip" id="tip">
+      <div class="tip-name"><i id="tipDot"></i><span id="tipName">—</span></div>
+      <div class="tip-meta" id="tipMeta"></div>
+    </div>
+  </div>
+
+  <div class="loader" id="loader">
+    <div class="spin"></div>
+    <div class="loader-txt">Establishing uplink</div>
+    <div class="loader-sub" id="loaderSub">loading three.js · fetching orbital imagery</div>
+  </div>
+</div>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLOBAL DATA FLOW — interactive 3D edge-network visualization
+   Single file · three.js from CDN · zero local assets
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const T0 = performance.now();
+const $  = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const DEG = Math.PI / 180;
+
+/* ── 1. three.js loader with CDN fallback ─────────────────────────────────── */
+const THREE_CDNS = [
+  'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+  'https://fastly.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+  'https://unpkg.com/three@0.160.0/build/three.module.js',
+  'https://esm.sh/three@0.160.0',
+];
+
+async function loadThree () {
+  let lastErr;
+  for (const url of THREE_CDNS) {
+    try {
+      $('loaderSub').textContent = 'loading three.js · ' + new URL(url).host;
+      const mod = await import(/* webpackIgnore: true */ url);
+      if (mod && mod.WebGLRenderer) return mod;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('three.js could not be loaded');
+}
+
+let THREE;
+try {
+  THREE = await loadThree();
+} catch (err) {
+  document.querySelector('.loader').innerHTML =
+    '<div class="fatal">Unable to load <code>three.js</code> from any CDN.<br>' +
+    'Check the network connection and reload the page.</div>';
+  throw err;
+}
+
+/* ── 2. data ──────────────────────────────────────────────────────────────── */
+const REGIONS = [
+  { id:'na',   name:'North America', color:'#4c8dff' },
+  { id:'apac', name:'Asia-Pacific',  color:'#ff5c1a' },
+  { id:'eu',   name:'Europe',        color:'#b48cff' },
+  { id:'sa',   name:'South America', color:'#34d399' },
+  { id:'af',   name:'Africa',        color:'#ffd21e' },
+  { id:'me',   name:'Middle East',   color:'#ff4fa3' },
+  { id:'oc',   name:'Oceania',       color:'#22d3ee' },
+];
+
+/* name | latitude | longitude — 308 cities across 7 regions */
+const CITY_DATA = {
+na: `New York|40.713|-74.006
+Los Angeles|34.052|-118.244
+Chicago|41.878|-87.630
+Toronto|43.653|-79.383
+Houston|29.760|-95.370
+Phoenix|33.448|-112.074
+Philadelphia|39.953|-75.165
+San Antonio|29.424|-98.494
+San Diego|32.716|-117.161
+Dallas|32.777|-96.797
+San Jose|37.339|-121.890
+Austin|30.267|-97.743
+Jacksonville|30.332|-81.656
+Fort Worth|32.755|-97.331
+Columbus|39.961|-82.999
+Charlotte|35.227|-80.843
+San Francisco|37.775|-122.419
+Indianapolis|39.768|-86.158
+Seattle|47.606|-122.332
+Denver|39.739|-104.990
+Washington|38.907|-77.037
+Boston|42.360|-71.059
+Nashville|36.163|-86.781
+Detroit|42.331|-83.046
+Portland|45.515|-122.679
+Las Vegas|36.170|-115.140
+Memphis|35.150|-90.049
+Baltimore|39.290|-76.612
+Milwaukee|43.039|-87.906
+Albuquerque|35.084|-106.650
+Atlanta|33.749|-84.388
+Miami|25.762|-80.192
+Minneapolis|44.978|-93.265
+New Orleans|29.951|-90.072
+Tampa|27.951|-82.457
+Pittsburgh|40.441|-79.996
+St. Louis|38.627|-90.199
+Salt Lake City|40.760|-111.891
+Honolulu|21.307|-157.858
+Anchorage|61.218|-149.900
+Vancouver|49.283|-123.121
+Montreal|45.501|-73.567
+Calgary|51.045|-114.072
+Ottawa|45.421|-75.697
+Edmonton|53.546|-113.494
+Winnipeg|49.895|-97.138
+Quebec City|46.813|-71.208
+Mexico City|19.433|-99.133
+Guadalajara|20.677|-103.347
+Monterrey|25.686|-100.316
+Tijuana|32.515|-117.038
+Cancún|21.161|-86.851
+Guatemala City|14.634|-90.507
+San José|9.928|-84.091
+Panama City|8.983|-79.517
+Havana|23.114|-82.366
+Santo Domingo|18.487|-69.929
+San Juan|18.466|-66.106
+Kingston|17.997|-76.793
+Port-au-Prince|18.539|-72.335`,
+
+apac: `Tokyo|35.677|139.650
+Osaka|34.694|135.502
+Nagoya|35.181|136.907
+Sapporo|43.062|141.354
+Fukuoka|33.590|130.402
+Sendai|38.268|140.869
+Hiroshima|34.385|132.455
+Seoul|37.567|126.978
+Busan|35.180|129.076
+Incheon|37.456|126.705
+Beijing|39.904|116.407
+Shanghai|31.230|121.474
+Guangzhou|23.129|113.264
+Shenzhen|22.543|114.058
+Chengdu|30.573|104.067
+Chongqing|29.563|106.551
+Hangzhou|30.274|120.155
+Wuhan|30.593|114.306
+Xi'an|34.341|108.940
+Nanjing|32.060|118.796
+Tianjin|39.343|117.362
+Qingdao|36.067|120.383
+Suzhou|31.299|120.585
+Shenyang|41.805|123.431
+Hong Kong|22.320|114.170
+Taipei|25.033|121.565
+Macau|22.199|113.545
+Ulaanbaatar|47.886|106.906
+Hanoi|21.028|105.854
+Ho Chi Minh City|10.823|106.630
+Da Nang|16.055|108.202
+Bangkok|13.756|100.502
+Chiang Mai|18.788|98.985
+Phuket|7.880|98.392
+Singapore|1.352|103.820
+Kuala Lumpur|3.139|101.687
+Penang|5.414|100.329
+Johor Bahru|1.493|103.741
+Jakarta|-6.209|106.846
+Surabaya|-7.249|112.751
+Bandung|-6.917|107.609
+Medan|3.595|98.672
+Denpasar|-8.651|115.217
+Manila|14.599|120.984
+Cebu|10.317|123.891
+Davao|7.191|125.455
+Yangon|16.866|96.195
+Mandalay|21.976|96.084
+Phnom Penh|11.557|104.916
+Vientiane|17.975|102.633
+Dhaka|23.811|90.413
+Chittagong|22.357|91.783
+Kolkata|22.573|88.364
+Mumbai|19.076|72.878
+Delhi|28.614|77.209
+Bengaluru|12.972|77.594
+Chennai|13.083|80.271
+Hyderabad|17.385|78.487
+Pune|18.520|73.856
+Ahmedabad|23.023|72.571
+Nagpur|21.146|79.088
+Colombo|6.927|79.861
+Kathmandu|27.718|85.324
+Islamabad|33.684|73.048
+Karachi|24.861|67.010
+Lahore|31.550|74.344
+Kabul|34.528|69.172
+Tashkent|41.300|69.240
+Almaty|43.238|76.889
+Bishkek|42.874|74.570`,
+
+eu: `London|51.507|-0.128
+Manchester|53.481|-2.242
+Birmingham|52.487|-1.890
+Glasgow|55.861|-4.250
+Edinburgh|55.953|-3.188
+Dublin|53.350|-6.260
+Paris|48.857|2.352
+Lyon|45.764|4.836
+Marseille|43.296|5.370
+Toulouse|43.605|1.444
+Bordeaux|44.838|-0.579
+Brussels|50.851|4.352
+Amsterdam|52.370|4.895
+Rotterdam|51.924|4.478
+Luxembourg|49.611|6.130
+Berlin|52.520|13.405
+Munich|48.135|11.582
+Hamburg|53.551|9.993
+Frankfurt|50.111|8.682
+Cologne|50.938|6.960
+Vienna|48.208|16.373
+Zurich|47.377|8.542
+Geneva|46.204|6.143
+Madrid|40.417|-3.704
+Barcelona|41.385|2.173
+Valencia|39.470|-0.376
+Lisbon|38.722|-9.139
+Porto|41.158|-8.629
+Rome|41.903|12.496
+Milan|45.464|9.190
+Naples|40.852|14.268
+Prague|50.076|14.438
+Warsaw|52.230|21.012
+Kraków|50.065|19.945
+Budapest|47.498|19.040
+Bratislava|48.148|17.107
+Bucharest|44.427|26.103
+Sofia|42.698|23.322
+Belgrade|44.787|20.449
+Zagreb|45.815|15.982
+Ljubljana|46.056|14.506
+Sarajevo|43.856|18.413
+Skopje|41.998|21.436
+Tirana|41.328|19.819
+Athens|37.984|23.728
+Thessaloniki|40.640|22.944
+Kyiv|50.450|30.523
+Lviv|49.840|24.031
+Odesa|46.482|30.723
+Minsk|53.900|27.567
+Vilnius|54.687|25.280
+Riga|56.949|24.105
+Tallinn|59.437|24.754
+Helsinki|60.170|24.938
+Stockholm|59.329|18.069
+Oslo|59.914|10.752
+Copenhagen|55.677|12.568
+Reykjavik|64.147|-21.942
+Moscow|55.756|37.617
+Saint Petersburg|59.938|30.316`,
+
+sa: `São Paulo|-23.551|-46.633
+Rio de Janeiro|-22.907|-43.173
+Brasília|-15.794|-47.882
+Salvador|-12.977|-38.501
+Fortaleza|-3.732|-38.527
+Belo Horizonte|-19.917|-43.934
+Manaus|-3.119|-60.022
+Curitiba|-25.428|-49.273
+Recife|-8.048|-34.877
+Porto Alegre|-30.035|-51.218
+Belém|-1.456|-48.504
+Goiânia|-16.686|-49.265
+Buenos Aires|-34.604|-58.382
+Córdoba|-31.420|-64.189
+Rosario|-32.944|-60.650
+Mendoza|-32.890|-68.845
+Montevideo|-34.902|-56.164
+Santiago|-33.449|-70.669
+Valparaíso|-33.047|-71.612
+Concepción|-36.827|-73.050
+Lima|-12.046|-77.043
+Arequipa|-16.409|-71.537
+Cusco|-13.532|-71.967
+Bogotá|4.711|-74.072
+Medellín|6.244|-75.581
+Cali|3.452|-76.532
+Barranquilla|10.968|-74.781
+Quito|-0.180|-78.467
+Guayaquil|-2.190|-79.890
+Caracas|10.481|-66.904
+Maracaibo|10.642|-71.612
+La Paz|-16.500|-68.150
+Santa Cruz|-17.783|-63.182
+Asunción|-25.263|-57.575`,
+
+af: `Cairo|30.044|31.236
+Alexandria|31.200|29.919
+Lagos|6.524|3.379
+Abuja|9.057|7.495
+Kano|12.002|8.522
+Port Harcourt|4.815|7.049
+Ibadan|7.378|3.895
+Accra|5.604|-0.187
+Abidjan|5.360|-4.008
+Dakar|14.716|-17.467
+Bamako|12.639|-8.003
+Ouagadougou|12.371|-1.520
+Lomé|6.131|1.222
+Cotonou|6.370|2.425
+Casablanca|33.573|-7.590
+Rabat|34.021|-6.836
+Marrakech|31.630|-7.981
+Tangier|35.759|-5.834
+Algiers|36.754|3.059
+Oran|35.697|-0.633
+Tunis|36.807|10.181
+Tripoli|32.888|13.192
+Khartoum|15.500|32.560
+Addis Ababa|9.025|38.747
+Nairobi|-1.286|36.817
+Mombasa|-4.043|39.668
+Kampala|0.348|32.582
+Kigali|-1.944|30.062
+Dar es Salaam|-6.792|39.208
+Lusaka|-15.387|28.323
+Harare|-17.825|31.033
+Gaborone|-24.658|25.912
+Windhoek|-22.560|17.080
+Johannesburg|-26.204|28.047
+Cape Town|-33.925|18.424
+Durban|-29.858|31.022
+Maputo|-25.966|32.568
+Antananarivo|-18.879|47.508
+Kinshasa|-4.442|15.266
+Luanda|-8.839|13.235`,
+
+me: `Dubai|25.205|55.271
+Abu Dhabi|24.453|54.377
+Doha|25.286|51.534
+Riyadh|24.713|46.675
+Jeddah|21.486|39.192
+Dammam|26.433|50.103
+Kuwait City|29.376|47.978
+Manama|26.229|50.586
+Muscat|23.588|58.408
+Tehran|35.689|51.389
+Mashhad|36.260|59.617
+Isfahan|32.654|51.668
+Tabriz|38.080|46.291
+Baghdad|33.315|44.366
+Basra|30.508|47.784
+Amman|31.956|35.945
+Beirut|33.888|35.495
+Damascus|33.513|36.292
+Jerusalem|31.769|35.214
+Tel Aviv|32.085|34.781
+Ankara|39.933|32.860
+Istanbul|41.008|28.978
+Izmir|38.423|27.143
+Baku|40.409|49.867
+Tbilisi|41.716|44.783
+Yerevan|40.179|44.499`,
+
+oc: `Sydney|-33.868|151.209
+Melbourne|-37.814|144.963
+Brisbane|-27.470|153.026
+Perth|-31.953|115.857
+Adelaide|-34.928|138.600
+Canberra|-35.281|149.128
+Gold Coast|-28.017|153.400
+Hobart|-42.883|147.331
+Darwin|-12.463|130.846
+Cairns|-16.920|145.771
+Auckland|-36.849|174.763
+Wellington|-41.287|174.776
+Christchurch|-43.532|172.636
+Hamilton|-37.787|175.280
+Suva|-18.141|178.442
+Port Moresby|-9.443|147.180
+Nouméa|-22.276|166.458
+Papeete|-17.537|-149.566`,
+};
+
+const HUBS = new Set([
+  'New York','Los Angeles','Chicago','Dallas','Miami','Seattle','Toronto','Mexico City',
+  'Tokyo','Singapore','Hong Kong','Shanghai','Seoul','Mumbai','Bangkok','Jakarta','Delhi',
+  'London','Frankfurt','Amsterdam','Paris','Madrid','Moscow','Stockholm','Milan',
+  'São Paulo','Buenos Aires','Santiago','Bogotá','Lima',
+  'Johannesburg','Lagos','Cairo','Nairobi','Cape Town',
+  'Dubai','Riyadh','Istanbul','Tel Aviv',
+  'Sydney','Melbourne','Auckland','Perth',
+]);
+
+/* deterministic PRNG so the network looks identical on every load */
+function mulberry32 (a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const rand = mulberry32(20240917);
+const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; };
+
+/* parse cities */
+const CITIES = [];
+REGIONS.forEach((r, ri) => {
+  CITY_DATA[r.id].trim().split('\n').forEach((line) => {
+    const p = line.trim().split('|');
+    if (p.length < 3) return;
+    const name = p[0].trim();
+    CITIES.push({
+      i: CITIES.length,
+      name,
+      lat: parseFloat(p[1]),
+      lon: parseFloat(p[2]),
+      region: ri,
+      hub: HUBS.has(name),
+      seed: hashStr(name),
+      pop: (name.replace(/[^A-Za-zÀ-ÿ]/g, '').toUpperCase() + 'XXX').slice(0, 3),
+    });
+  });
+});
+const REGION_COUNT = REGIONS.map((_, ri) => CITIES.filter((c) => c.region === ri).length);
+
+/* links: cross-region hub backbone + intra-region spokes + leaf uplinks.
+   tier 2 = inter-region backbone, 1 = intra-region distribution, 0 = leaf uplink */
+const LINKS = [];
+const linkMap = new Map();
+const addLink = (a, b, tier) => {
+  if (a === b) return;
+  const k = Math.min(a, b) + ':' + Math.max(a, b);
+  const prev = linkMap.get(k);
+  if (prev !== undefined) { if (tier > LINKS[prev][2]) LINKS[prev][2] = tier; return; }
+  linkMap.set(k, LINKS.length);
+  LINKS.push([a, b, tier]);
+};
+
+const hubIdx = CITIES.filter((c) => c.hub).map((c) => c.i);
+const nearest = (idx, pool, n) => pool
+  .filter((j) => j !== idx)
+  .map((j) => ({ j, d: Math.hypot(CITIES[idx].lat - CITIES[j].lat, (CITIES[idx].lon - CITIES[j].lon) * Math.cos(CITIES[idx].lat * DEG)) }))
+  .sort((p, q) => p.d - q.d)
+  .slice(0, n)
+  .map((o) => o.j);
+
+/* a) inter-region backbone — every hub links to its closest hubs abroad */
+for (const h of hubIdx) {
+  const abroad = hubIdx.filter((j) => CITIES[j].region !== CITIES[h].region);
+  for (const j of nearest(h, abroad, 2)) addLink(h, j, 2);
+}
+/* b) intra-region distribution — hubs feed their 3 closest regional neighbours */
+for (const h of hubIdx) {
+  const same = CITIES.filter((c) => c.region === CITIES[h].region).map((c) => c.i);
+  for (const j of nearest(h, same, 3)) addLink(h, j, 1);
+}
+/* c) every remaining city gets an uplink to its nearest hub */
+for (const c of CITIES) {
+  if (c.hub) continue;
+  addLink(c.i, nearest(c.i, hubIdx, 1)[0], 0);
+}
+const DEGREE = CITIES.map(() => 0);
+LINKS.forEach(([a, b]) => { DEGREE[a]++; DEGREE[b]++; });
+const TIER_RADIUS = [0.0026, 0.0040, 0.0058];
+
+/* ── 3. geometry helpers ──────────────────────────────────────────────────── */
+const R = 1;
+const ll2v = (lat, lon, r = R) => {
+  const phi = (90 - lat) * DEG, theta = (lon + 180) * DEG;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta),
+  );
+};
+CITIES.forEach((c) => { c.local = ll2v(c.lat, c.lon, R * 1.004); c.world = new THREE.Vector3(); });
+
+const arcOf = (a, b) => {
+  const start = ll2v(a.lat, a.lon, R * 1.006);
+  const end   = ll2v(b.lat, b.lon, R * 1.006);
+  const dist  = start.distanceTo(end);
+  const ctrl  = start.clone().add(end).multiplyScalar(0.5);
+  if (ctrl.lengthSq() < 1e-7) ctrl.set(0, 1, 0);
+  ctrl.normalize().multiplyScalar(R * (1.055 + dist * 0.30));
+  return { start, ctrl, end, dist };
+};
+
+/* ── 4. renderer / scene ──────────────────────────────────────────────────── */
+const canvas = $('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x02030a, 1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.34;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(36, 1, 0.05, 500);
+const world = new THREE.Group();          // spins slowly: earth + clouds + markers + arcs
+scene.add(world);
+
+/* view-space helpers for the shaders */
+const focalScale = () => renderer.domElement.height / (2 * Math.tan(camera.fov * 0.5 * DEG));
+
+/* ── 5. textures: CDN chain with procedural fallback ──────────────────────── */
+const TEX_BASES = [
+  'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/',
+  'https://fastly.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/',
+  'https://gcore.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/',
+  'https://raw.githack.com/mrdoob/three.js/r160/examples/textures/planets/',
+  'https://cdn.statically.io/gh/mrdoob/three.js/r160/examples/textures/planets/',
+];
+let bestBase = 0;
+
+function loadImage (file, timeout = 9000) {
+  return new Promise((resolve, reject) => {
+    const order = [TEX_BASES[bestBase], ...TEX_BASES.filter((_, i) => i !== bestBase)];
+    let n = 0;
+    const attempt = () => {
+      if (n >= order.length) return reject(new Error('all sources failed: ' + file));
+      const base = order[n++];
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; img.src = ''; attempt(); } }, timeout);
+      img.onload = () => { if (done) return; done = true; clearTimeout(timer); bestBase = TEX_BASES.indexOf(base); resolve(img); };
+      img.onerror = () => { if (done) return; done = true; clearTimeout(timer); attempt(); };
+      img.src = base + file;
+    };
+    attempt();
+  });
+}
+
+function toTexture (img, srgb) {
+  const t = new THREE.Texture(img);
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  t.needsUpdate = true;
+  return t;
+}
+
+/* --- procedural planet (used only if every CDN mirror is unreachable) ----- */
+function noise3 (x, y, z) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const xf = x - xi, yf = y - yi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+  const h = (a, b, c) => { const n = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453; return n - Math.floor(n); };
+  const l = (a, b, t) => a + (b - a) * t;
+  const x00 = l(h(xi, yi, zi), h(xi + 1, yi, zi), u), x10 = l(h(xi, yi + 1, zi), h(xi + 1, yi + 1, zi), u);
+  const x01 = l(h(xi, yi, zi + 1), h(xi + 1, yi, zi + 1), u), x11 = l(h(xi, yi + 1, zi + 1), h(xi + 1, yi + 1, zi + 1), u);
+  return l(l(x00, x10, v), l(x01, x11, v), w);
+}
+function fbm3 (x, y, z, oct = 4) {
+  let a = 0.5, f = 1, s = 0, n = 0;
+  for (let i = 0; i < oct; i++) { s += a * noise3(x * f, y * f, z * f); n += a; a *= 0.5; f *= 2.07; }
+  return s / n;
+}
+function proceduralPlanet (W = 384, H = 192) {
+  const cv = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+  const day = cv(W, H), night = cv(W, H), spec = cv(W, H), cloud = cv(W, H);
+  const dctx = day.getContext('2d'), nctx = night.getContext('2d'), sctx = spec.getContext('2d'), cctx = cloud.getContext('2d');
+  const dI = dctx.createImageData(W, H), nI = nctx.createImageData(W, H), sI = sctx.createImageData(W, H), cI = cctx.createImageData(W, H);
+  const rnd = mulberry32(7);
+  for (let y = 0; y < H; y++) {
+    const lat = 90 - (y + 0.5) / H * 180, cl = Math.cos(lat * DEG);
+    for (let x = 0; x < W; x++) {
+      const lon = (x + 0.5) / W * 360 - 180;
+      const d = ll2v(lat, lon, 1);
+      const el = fbm3(d.x * 1.75 + 13, d.y * 1.75 + 5, d.z * 1.75 + 9, 5) - 0.47;
+      const land = smoothstep(-0.015, 0.045, el);
+      const ice = smoothstep(0.66, 0.86, Math.abs(Math.sin(lat * DEG))) * (0.55 + 0.45 * fbm3(d.x * 6, d.y * 6, d.z * 6, 2));
+      const arid = smoothstep(0.12, 0.32, fbm3(d.x * 3 + 40, d.y * 3, d.z * 3, 3) - 0.35 * Math.abs(Math.sin(lat * DEG * 1.6)));
+      const i = (y * W + x) * 4;
+      /* ocean */
+      const depth = 0.5 + 0.5 * fbm3(d.x * 2.4 + 70, d.y * 2.4, d.z * 2.4, 2);
+      let r = 4 + 6 * depth, g = 16 + 22 * depth, b = 44 + 46 * depth;
+      /* land */
+      const veg = smoothstep(0.2, 0.7, fbm3(d.x * 5 + 21, d.y * 5, d.z * 5, 3));
+      const lr = 46 + 92 * arid + 30 * veg * (1 - arid), lg = 78 + 42 * arid - 18 * veg, lb = 44 + 40 * arid - 10 * veg;
+      r = r + (lr - r) * land; g = g + (lg - g) * land; b = b + (lb - b) * land;
+      r = r + (232 - r) * ice; g = g + (238 - g) * ice; b = b + (245 - b) * ice;
+      dI.data[i] = r; dI.data[i + 1] = g; dI.data[i + 2] = b; dI.data[i + 3] = 255;
+      /* city lights */
+      const spark = land * (1 - ice) * Math.pow(rnd(), 26) * 6;
+      nI.data[i] = Math.min(255, 255 * spark); nI.data[i + 1] = Math.min(255, 190 * spark); nI.data[i + 2] = Math.min(255, 120 * spark); nI.data[i + 3] = 255;
+      /* ocean mask for specular */
+      const sp = (1 - land) * 235 + 12;
+      sI.data[i] = sI.data[i + 1] = sI.data[i + 2] = sp; sI.data[i + 3] = 255;
+      /* clouds */
+      const cf = fbm3(d.x * 3.1 + 90, d.y * 3.1 + 30 + cl, d.z * 3.1, 5);
+      const cv2 = smoothstep(0.5, 0.72, cf);
+      cI.data[i] = cI.data[i + 1] = cI.data[i + 2] = 255;
+      cI.data[i + 3] = 255 * cv2 * 0.95;
+    }
+  }
+  dctx.putImageData(dI, 0, 0); nctx.putImageData(nI, 0, 0); sctx.putImageData(sI, 0, 0); cctx.putImageData(cI, 0, 0);
+  return { day: toTexture(day, true), night: toTexture(night, true), spec: toTexture(spec, false), clouds: toTexture(cloud, true) };
+}
+
+let TEX = null;
+async function buildTextures () {
+  try {
+    const [dayI, nightI, specI, cloudI] = await Promise.all([
+      loadImage('earth_atmos_2048.jpg'),
+      loadImage('earth_lights_2048.png'),
+      loadImage('earth_specular_2048.jpg'),
+      loadImage('earth_clouds_1024.png'),
+    ]);
+    TEX = { day: toTexture(dayI, true), night: toTexture(nightI, true), spec: toTexture(specI, false), clouds: toTexture(cloudI, true) };
+    $('loaderSub').textContent = 'imagery ok · building network';
+    console.log('[globe] orbital imagery via ' + TEX_BASES[bestBase]);
+  } catch (e) {
+    console.warn('[globe] CDN imagery unavailable — using procedural planet.', e);
+    TEX = proceduralPlanet();
+    $('loaderSub').textContent = 'offline imagery · procedural planet';
+  }
+}
+
+/* orbital imagery must be resolved before materials are built */
+await buildTextures();
+
+/* ── 6. sun + shaders ─────────────────────────────────────────────────────── */
+const SUN = new THREE.Vector3(-0.696, 0.347, 0.628).normalize();
+const COLORS = REGIONS.map((r) => new THREE.Color(r.color));
+const rgb = (c) => `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`;
+
+const CHUNKS = '#include <tonemapping_fragment>\n#include <colorspace_fragment>';
+
+/* ── earth ── */
+const earthMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uDay: { value: TEX.day }, uNight: { value: TEX.night }, uSpec: { value: TEX.spec },
+    uSun: { value: SUN }, uNightGain: { value: 1.0 }, uAtmo: { value: new THREE.Color('#5c9dff') },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+    void main(){
+      vUv = uv;
+      vN = normalize(mat3(modelMatrix) * normal);
+      vec4 wp = modelMatrix * vec4(position,1.0);
+      vP = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D uDay, uNight, uSpec;
+    uniform vec3 uSun, uAtmo; uniform float uNightGain;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+    void main(){
+      vec3 N = normalize(vN);
+      vec3 V = normalize(cameraPosition - vP);
+      float NdL = dot(N, uSun);
+      float dayF = smoothstep(-0.14, 0.16, NdL);
+
+      vec3 dayC   = texture2D(uDay, vUv).rgb;
+      vec3 nightC = texture2D(uNight, vUv).rgb;
+      nightC = nightC * nightC * 2.6 * uNightGain;
+
+      float diff = clamp(NdL, 0.0, 1.0);
+      vec3 lit = dayC * (0.045 + 0.98 * diff);
+      vec3 col = mix(nightC + dayC * 0.020, lit, dayF);
+
+      float ocean = texture2D(uSpec, vUv).r;
+      vec3 H = normalize(uSun + V);
+      float spec = pow(max(dot(N, H), 0.0), 220.0) * ocean * dayF;
+      col += vec3(0.86, 0.93, 1.0) * spec * 0.26;
+
+      float rim = pow(1.0 - max(dot(N, V), 0.0), 3.4);
+      col += uAtmo * rim * (0.05 + 0.30 * dayF);
+
+      gl_FragColor = vec4(col, 1.0);
+      ${CHUNKS}
+    }`,
+});
+const earth = new THREE.Mesh(new THREE.SphereGeometry(R, 160, 96), earthMat);
+world.add(earth);
+
+/* ── clouds ── */
+const cloudMat = new THREE.ShaderMaterial({
+  uniforms: { uMap: { value: TEX.clouds }, uSun: { value: SUN }, uOpacity: { value: 0.46 } },
+  transparent: true, depthWrite: false,
+  vertexShader: /* glsl */`
+    varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+    void main(){
+      vUv = uv;
+      vN = normalize(mat3(modelMatrix) * normal);
+      vec4 wp = modelMatrix * vec4(position,1.0);
+      vP = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D uMap; uniform vec3 uSun; uniform float uOpacity;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+    void main(){
+      vec4 t = texture2D(uMap, vUv);
+      float a = t.r * t.a;
+      a = pow(a, 1.45) * 1.15;                  // crisper cumulus instead of flat haze
+      if (a < 0.004) discard;
+      vec3 N = normalize(vN);
+      vec3 V = normalize(cameraPosition - vP);
+      float lit = smoothstep(-0.32, 0.42, dot(N, uSun));
+      vec3 col = mix(vec3(0.03, 0.045, 0.085), vec3(0.88, 0.91, 0.96), lit);
+      col += vec3(0.28, 0.46, 0.86) * pow(1.0 - max(dot(N, V), 0.0), 2.4) * 0.20;
+      // fade the deck out completely at the silhouette: a dark night-side cloud
+      // fragment painted over the bright limb glow is what produced the dashed
+      // seam the QA passes kept flagging.
+      float fade = smoothstep(0.02, 0.20, dot(N, V));
+      gl_FragColor = vec4(col, a * uOpacity * fade);
+      ${CHUNKS}
+    }`,
+});
+const clouds = new THREE.Mesh(new THREE.SphereGeometry(R * 1.004, 96, 56), cloudMat);
+world.add(clouds);
+
+/* ── atmosphere shells ──
+   Rendered on the back side, so the visible part is the annulus between the
+   planet limb and the shell silhouette. The glow profile is driven by the
+   screen-space radius (rho) — brightest right on the limb, fading smoothly to
+   exactly zero at the shell edge, which avoids the hard concentric rings that
+   a plain fresnel term produces. */
+function atmosphere (radius, color, power, intensity) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) }, uSun: { value: SUN },
+      uPow: { value: power }, uInt: { value: intensity },
+      uRp: { value: R / radius },
+    },
+    side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      varying vec3 vN; varying vec3 vP;
+      void main(){
+        vN = normalize(mat3(modelMatrix) * normal);
+        vec4 wp = modelMatrix * vec4(position,1.0);
+        vP = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uColor, uSun; uniform float uPow, uInt, uRp;
+      varying vec3 vN; varying vec3 vP;
+      void main(){
+        vec3 V = normalize(cameraPosition - vP);
+        float d = clamp(abs(dot(normalize(vN), V)), 0.0, 1.0);
+        float rho = sqrt(max(1.0 - d * d, 0.0));                  // 0 = disc centre, 1 = shell edge
+        float t = clamp((rho - uRp) / max(1.0 - uRp, 0.001), 0.0, 1.0);
+        float glow = pow(1.0 - t, uPow) * smoothstep(0.0, 0.06, t) * uInt;
+        float sun = smoothstep(-0.95, 0.45, dot(normalize(vP), uSun));
+        vec3 col = uColor * glow * (0.14 + 1.0 * sun);
+        float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+        col += dither * 0.006;
+        gl_FragColor = vec4(col, clamp(glow * 0.95, 0.0, 1.0));
+        ${CHUNKS}
+      }`,
+  });
+  const m = new THREE.Mesh(new THREE.SphereGeometry(radius, 64, 40), mat);
+  m.renderOrder = 1;
+  world.add(m);
+  return m;
+}
+atmosphere(1.055, '#5c9dff', 2.6, 0.60);
+atmosphere(1.17, '#4a86ff', 2.8, 0.36);
+atmosphere(1.42, '#3f6fe8', 3.4, 0.14);
+
+/* ── sun glow sprite ── */
+{
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const rad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  rad.addColorStop(0, 'rgba(255,250,235,1)');
+  rad.addColorStop(0.14, 'rgba(255,228,180,.6)');
+  rad.addColorStop(0.42, 'rgba(255,190,120,.14)');
+  rad.addColorStop(1, 'rgba(255,170,90,0)');
+  g.fillStyle = rad; g.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, opacity: 0.85 }));
+  spr.position.copy(SUN).multiplyScalar(14);
+  spr.scale.setScalar(7.5);
+  scene.add(spr);
+}
+
+/* ── 7. deep space: gradient dome + starfield ─────────────────────────────── */
+{
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    vertexShader: /* glsl */`
+      varying vec3 vD;
+      void main(){ vD = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vD;
+      void main(){
+        vec3 d = normalize(vD);
+        float h = d.y * 0.5 + 0.5;
+        vec3 c = mix(vec3(0.0035,0.0055,0.0125), vec3(0.013,0.021,0.045), pow(h, 1.5));
+        c += vec3(0.020,0.032,0.070) * pow(1.0 - h, 3.0) * 0.6;      // low haze
+        c += vec3(0.030,0.020,0.055) * pow(max(0.0, 1.0 - abs(d.x)), 6.0) * 0.35;
+        float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453) - 0.5;
+        gl_FragColor = vec4(max(c + dither * 0.0035, 0.0), 1.0);
+        ${CHUNKS}
+      }`,
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(160, 32, 24), mat);
+  dome.frustumCulled = false;
+  scene.add(dome);
+}
+{
+  const N = 12000;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), size = new Float32Array(N), ph = new Float32Array(N);
+  const c = new THREE.Color();
+  for (let i = 0; i < N; i++) {
+    const u = rand() * 2 - 1, th = rand() * Math.PI * 2, r = 26 + rand() * 62;
+    const s = Math.sqrt(1 - u * u);
+    pos[i * 3] = r * s * Math.cos(th); pos[i * 3 + 1] = r * u; pos[i * 3 + 2] = r * s * Math.sin(th);
+    const t = rand();
+    c.setHSL(t < 0.72 ? 0.58 : (t < 0.9 ? 0.11 : 0.02), t < 0.72 ? 0.42 : 0.5, 0.72 + rand() * 0.28);
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    const r2 = rand();
+    size[i] = r2 < 0.028 ? 1.9 + rand() * 1.5 : (r2 < 0.30 ? 1.15 + rand() * 0.7 : 0.7 + rand() * 0.7);
+    ph[i] = rand();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() }, uH: { value: 1 } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      attribute vec3 aColor; attribute float aSize; attribute float aPhase;
+      uniform float uTime, uPR, uH;
+      varying vec3 vC; varying float vA;
+      void main(){
+        vC = aColor;
+        float tw = 0.62 + 0.38 * sin(uTime * (0.7 + aPhase * 1.6) + aPhase * 40.0);
+        vA = 0.5 + 0.5 * tw;
+        gl_PointSize = aSize * uPR * uH * (0.8 + 0.5 * tw);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vC; varying float vA;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        float core = smoothstep(0.5, 0.06, d);
+        float halo = exp(-d * 5.0) * 0.45;
+        float a = (core * 0.85 + halo) * vA;
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(vC * (0.7 + core * 1.5), a);
+        ${CHUNKS}
+      }`,
+  });
+  const stars = new THREE.Points(geo, mat);
+  stars.frustumCulled = false;
+  scene.add(stars);
+  window.__stars = mat;
+}
+
+/* ── 8. city markers ──────────────────────────────────────────────────────── */
+const FOCUS_NONE = -1;
+let focusRegion = FOCUS_NONE;
+let hovered = -1;
+let selected = -1;
+
+const markerUniforms = {
+  uTime: { value: 0 }, uScale: { value: focalScale() }, uPR: { value: renderer.getPixelRatio() },
+  uFocus: { value: -1 }, uHover: { value: -1 }, uSel: { value: -1 },
+};
+{
+  const N = CITIES.length;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), size = new Float32Array(N);
+  const reg = new Float32Array(N), ph = new Float32Array(N);
+  CITIES.forEach((c, i) => {
+    pos[i * 3] = c.local.x; pos[i * 3 + 1] = c.local.y; pos[i * 3 + 2] = c.local.z;
+    const base = COLORS[c.region].clone();
+    if (c.hub) base.lerp(new THREE.Color('#ffffff'), 0.08);
+    col[i * 3] = base.r; col[i * 3 + 1] = base.g; col[i * 3 + 2] = base.b;
+    size[i] = (c.hub ? 0.0175 : 0.0112) * (0.88 + c.seed * 0.3);
+    reg[i] = c.region;
+    ph[i] = c.seed;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('aRegion', new THREE.BufferAttribute(reg, 1));
+  geo.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+
+  const VERT = /* glsl */`
+    attribute vec3 aColor; attribute float aSize; attribute float aRegion; attribute float aPhase;
+    uniform float uTime, uScale, uFocus, uHover, uSel, uLayer;
+    varying vec3 vC; varying float vA; varying float vH; varying float vS;
+    void main(){
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vec3 nView = normalize(normalMatrix * normalize(position));   // world normal → view space
+      float facing = dot(nView, normalize(-mv.xyz));               // same space on both sides
+      float visible = smoothstep(0.16, 0.50, facing);
+      float isHub = step(0.0155, aSize);
+      float pulse = 1.0 + 0.12 * sin(uTime * 1.5 + aPhase * 31.4) * (0.35 + 0.65 * isHub);
+      float hi = (abs(aPhase - uHover) < 0.0001 || abs(aPhase - uSel) < 0.0001) ? 1.0 : 0.0;
+      gl_PointSize = aSize * pulse * (1.0 + hi * 0.75) * uLayer * uScale / max(-mv.z, 0.001);
+      vS = gl_PointSize;
+      gl_Position = projectionMatrix * mv;
+      vC = aColor;
+      vH = hi;
+      float dim = (uFocus < -0.5 || abs(aRegion - uFocus) < 0.5) ? 1.0 : 0.10;
+      vA = visible * dim * (0.62 + 0.38 * facing);
+    }`;
+
+  /* soft halo — additive, sits under the solid core */
+  const glowMat = new THREE.ShaderMaterial({
+    uniforms: Object.assign({ uLayer: { value: 3.4 } }, markerUniforms),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: VERT,
+    fragmentShader: /* glsl */`
+      varying vec3 vC; varying float vA; varying float vH; varying float vS;
+      void main(){
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float halo = exp(-d * 3.1) * (1.0 - smoothstep(0.78, 1.0, d));
+        float a = halo * vA * (0.40 + vH * 0.55);
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(vC * (1.0 + vH * 0.8), a);
+        ${CHUNKS}
+      }`,
+  });
+  const glow = new THREE.Points(geo, glowMat);
+  glow.frustumCulled = false;
+  glow.renderOrder = 4;
+  world.add(glow);
+
+  /* solid core — non-additive so the region hue never clips to white */
+  const coreMat = new THREE.ShaderMaterial({
+    uniforms: Object.assign({ uLayer: { value: 1.0 } }, markerUniforms),
+    transparent: true, depthWrite: false,
+    vertexShader: VERT,
+    fragmentShader: /* glsl */`
+      varying vec3 vC; varying float vA; varying float vH; varying float vS;
+      void main(){
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float disc = 1.0 - smoothstep(0.52, 0.94, d);
+        if (disc < 0.02) discard;
+        float big = smoothstep(5.0, 8.5, vS);          // only large sprites can afford a rim
+        float rim = smoothstep(0.42, 0.95, d) * big;
+        vec3 c = mix(vC * 1.05, vC * 0.42, rim * 0.85);
+        c = mix(c, vec3(1.0), vH * 0.40 + (1.0 - rim) * 0.07);
+        gl_FragColor = vec4(c, disc * vA * (0.95 - 0.12 * rim));
+        ${CHUNKS}
+      }`,
+  });
+  const core = new THREE.Points(geo, coreMat);
+  core.frustumCulled = false;
+  core.renderOrder = 5;
+  world.add(core);
+}
+
+/* hover / selection rings */
+function makeRing (inner, outer, color) {
+  const m = new THREE.Mesh(
+    new THREE.RingGeometry(inner, outer, 64),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }),
+  );
+  m.visible = false;
+  m.renderOrder = 6;
+  world.add(m);
+  return m;
+}
+const hoverRing = makeRing(0.030, 0.036, '#ffffff');
+const selRingA = makeRing(0.034, 0.039, '#ffffff');
+const selRingB = makeRing(0.048, 0.0505, '#ffffff');
+function placeRing (ring, c, scale = 1) {
+  ring.position.copy(c.local);
+  ring.lookAt(0, 0, 0);
+  ring.scale.setScalar(scale);
+}
+
+/* ── 9. arcs + flowing particles ──────────────────────────────────────────── */
+const arcUniforms = {
+  uTime: { value: 0 }, uFocus: { value: -1 }, uSel: { value: -1 }, uPR: { value: renderer.getPixelRatio() },
+};
+{
+  const TUB = 42, RAD_SEG = 3;
+  const P = [], Nn = [], U = [], SD = [], CA = [], CB = [], RA = [], RB = [], SI = [], DI = [], TR = [], IX = [];
+  const PH = [], P1 = [], PC = [], PS = [], PT = [], PR = [], realEnd = [];
+  let vOff = 0;
+
+  const tmpGeoCache = [];
+  LINKS.forEach(([ia, ib, tier]) => {
+    const a = CITIES[ia], b = CITIES[ib];
+    const { start, ctrl, end } = arcOf(a, b);
+    const curve = new THREE.QuadraticBezierCurve3(start, ctrl, end);
+    const g = new THREE.TubeGeometry(curve, TUB, TIER_RADIUS[tier], RAD_SEG, false);
+    const gp = g.attributes.position.array, gn = g.attributes.normal.array, gu = g.attributes.uv.array, gi = g.index.array;
+    const vc = g.attributes.position.count;
+    const ca = COLORS[a.region], cb = COLORS[b.region];
+    const seed = rand();
+    for (let i = 0; i < vc; i++) {
+      P.push(gp[i * 3], gp[i * 3 + 1], gp[i * 3 + 2]);
+      Nn.push(gn[i * 3], gn[i * 3 + 1], gn[i * 3 + 2]);
+      U.push(gu[i * 2], gu[i * 2 + 1]);
+      SD.push(seed); CA.push(ca.r, ca.g, ca.b); CB.push(cb.r, cb.g, cb.b);
+      RA.push(a.region); RB.push(b.region); SI.push(ia); DI.push(ib); TR.push(tier);
+    }
+    for (let i = 0; i < gi.length; i++) IX.push(gi[i] + vOff);
+    vOff += vc;
+    tmpGeoCache.push(g);
+
+    /* travelling packets — the busier the link, the more of them */
+    const packets = tier === 2 ? 3 : (tier === 1 ? 2 : 1);
+    for (let k = 0; k < packets; k++) {
+      PH.push(start.x, start.y, start.z); P1.push(ctrl.x, ctrl.y, ctrl.z);
+      realEnd.push(end.x, end.y, end.z);
+      PC.push(ca.r, ca.g, ca.b); PS.push(rand()); PT.push(tier); PR.push(a.region);
+    }
+  });
+  tmpGeoCache.forEach((g) => g.dispose());
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(Nn), 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(U), 2));
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(SD), 1));
+  geo.setAttribute('aColA', new THREE.BufferAttribute(new Float32Array(CA), 3));
+  geo.setAttribute('aColB', new THREE.BufferAttribute(new Float32Array(CB), 3));
+  geo.setAttribute('aRegA', new THREE.BufferAttribute(new Float32Array(RA), 1));
+  geo.setAttribute('aRegB', new THREE.BufferAttribute(new Float32Array(RB), 1));
+  geo.setAttribute('aSrc', new THREE.BufferAttribute(new Float32Array(SI), 1));
+  geo.setAttribute('aDst', new THREE.BufferAttribute(new Float32Array(DI), 1));
+  geo.setAttribute('aTier', new THREE.BufferAttribute(new Float32Array(TR), 1));
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(IX), 1));
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms: arcUniforms,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      attribute vec3 aColA, aColB;
+      attribute float aSeed, aRegA, aRegB, aSrc, aDst, aTier;
+      uniform float uTime, uFocus, uSel, uPR;
+      varying vec2 vUv; varying vec3 vC; varying float vA; varying vec3 vN; varying vec3 vP; varying float vSeed;
+      void main(){
+        vUv = uv;
+        vSeed = aSeed;
+        vC = mix(aColA, aColB, uv.x);
+        vN = normalize(mat3(modelMatrix) * normal);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vP = wp.xyz;
+        float touch = (uSel > -0.5 && (abs(aSrc - uSel) < 0.5 || abs(aDst - uSel) < 0.5)) ? 1.0 : 0.0;
+        float inFocus = (uFocus < -0.5 || abs(aRegA - uFocus) < 0.5 || abs(aRegB - uFocus) < 0.5) ? 1.0 : 0.0;
+        float tierA = mix(0.55, 1.0, aTier * 0.5);          // leaf .55 · intra .78 · backbone 1.0
+        vA = tierA * mix(0.14, 1.0, touch) * mix(0.14, 1.0, inFocus);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime, uPR;
+      varying vec2 vUv; varying vec3 vC; varying float vA; varying vec3 vN; varying vec3 vP; varying float vSeed;
+      void main(){
+        vec3 V = normalize(cameraPosition - vP);
+        float facing = abs(dot(normalize(vN), V));
+        float filament = mix(0.55, 1.0, pow(facing, 0.85));
+        float ends = smoothstep(0.0, 0.10, vUv.x) * smoothstep(1.0, 0.90, vUv.x);
+        float t = fract(vUv.x - uTime * 0.115 + vSeed * 3.77);
+        float comet = smoothstep(0.80, 1.0, t) * 1.35 + smoothstep(0.50, 1.0, t) * 0.45;
+        float base = 0.46 + 0.07 * sin(vUv.x * 9.0 - uTime * 1.15);
+        float a = vA * filament * (base + comet) * (0.35 + 0.65 * ends);
+        if (a < 0.002) discard;
+        gl_FragColor = vec4(vC * (0.7 + comet * 1.6), a);
+        ${CHUNKS}
+      }`,
+  });
+  const arcs = new THREE.Mesh(geo, mat);
+  arcs.frustumCulled = false;
+  arcs.renderOrder = 2;
+  world.add(arcs);
+
+  /* packets */
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PH), 3));
+  pGeo.setAttribute('aCtrl', new THREE.BufferAttribute(new Float32Array(P1), 3));
+  pGeo.setAttribute('aEnd', new THREE.BufferAttribute(new Float32Array(realEnd), 3));
+  pGeo.setAttribute('aCol', new THREE.BufferAttribute(new Float32Array(PC), 3));
+  pGeo.setAttribute('aPhase', new THREE.BufferAttribute(new Float32Array(PS), 1));
+  pGeo.setAttribute('aTier', new THREE.BufferAttribute(new Float32Array(PT), 1));
+  pGeo.setAttribute('aReg', new THREE.BufferAttribute(new Float32Array(PR), 1));
+  const pMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uScale: { value: focalScale() }, uPR: { value: renderer.getPixelRatio() }, uFocus: { value: -1 } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      attribute vec3 aCtrl, aEnd, aCol; attribute float aPhase, aTier, aReg;
+      uniform float uTime, uScale, uPR, uFocus;
+      varying vec3 vC; varying float vA;
+      void main(){
+        float t = fract(uTime * (0.055 + aPhase * 0.05) + aPhase * 7.31);
+        float u = 1.0 - t;
+        vec3 p = u * u * position + 2.0 * u * t * aCtrl + t * t * aEnd;
+        p *= 1.0 + 0.012 * sin(t * 3.14159);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vec3 nView = normalize(normalMatrix * normalize(p));
+        float face = smoothstep(0.10, 0.45, dot(nView, normalize(-mv.xyz)));
+        gl_PointSize = (0.0125 * uScale / max(-mv.z, 0.001)) * (0.65 + 0.35 * sin(t * 3.14159));
+        gl_Position = projectionMatrix * mv;
+        vC = mix(aCol, vec3(1.0), 0.18 + 0.22 * sin(t * 3.14159));
+        float focus = (uFocus < -0.5 || abs(aReg - uFocus) < 0.5) ? 1.0 : 0.10;
+        vA = face * focus * mix(0.32, 1.0, aTier * 0.5) * (0.35 + 0.65 * sin(t * 3.14159)) * (1.0 - smoothstep(0.92, 1.0, t));
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vC; varying float vA;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        float core = smoothstep(0.5, 0.1, d);
+        float halo = exp(-d * 6.0) * 0.6;
+        float a = (core + halo) * vA;
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(vC * (1.0 + core * 1.6), a);
+        ${CHUNKS}
+      }`,
+  });
+  const packets = new THREE.Points(pGeo, pMat);
+  packets.frustumCulled = false;
+  packets.renderOrder = 3;
+  world.add(packets);
+  window.__packetMat = pMat;
+}
+
+/* ── 10. camera controls ──────────────────────────────────────────────────── */
+class Orbit {
+  constructor (cam, dom) {
+    this.cam = cam; this.dom = dom;
+    this.theta = 0.85; this.phi = Math.PI * 0.5 - 0.30; this.radius = 6.8;
+    this.thetaT = this.theta; this.phiT = this.phi; this.radiusT = 4.15;
+    this.minR = 1.75; this.maxR = 9.0;
+    this.autoRotate = true; this.autoSpeed = 0.028;
+    this.idle = 0; this.dragging = false; this.moved = 0;
+    this.ptrs = new Map(); this.pinch = 0;
+    this.onFirstInput = null;
+    this._bind();
+    this.apply(1);
+  }
+  _bind () {
+    const d = this.dom;
+    d.addEventListener('pointerdown', (e) => {
+      d.setPointerCapture?.(e.pointerId);
+      this.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.dragging = true; this.moved = 0; this.idle = 0; this.autoRotate = false;
+      d.classList.add('dragging');
+      if (this.ptrs.size === 2) this.pinch = this._dist();
+    });
+    d.addEventListener('pointermove', (e) => {
+      const p = this.ptrs.get(e.pointerId);
+      if (!p) return;
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY;
+      if (this.ptrs.size >= 2) {
+        const dd = this._dist();
+        if (this.pinch > 0) this.zoom(Math.pow(this.pinch / dd, 1.0));
+        this.pinch = dd;
+        return;
+      }
+      this.moved += Math.abs(dx) + Math.abs(dy);
+      const k = 0.0042 * clamp(this.radiusT / 3, 0.55, 1.5);
+      this.thetaT -= dx * k;
+      this.phiT = clamp(this.phiT - dy * k, 0.10, Math.PI - 0.10);
+    });
+    const up = (e) => {
+      this.ptrs.delete(e.pointerId);
+      if (this.ptrs.size === 0) { this.dragging = false; d.classList.remove('dragging'); }
+      this.pinch = 0;
+    };
+    d.addEventListener('pointerup', up);
+    d.addEventListener('pointercancel', up);
+    d.addEventListener('pointerleave', (e) => { if (this.ptrs.size === 0) this.hovering = false; });
+    d.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      this.zoom(Math.exp(dy * 0.0011));
+      this.idle = 0; this.autoRotate = false;
+    }, { passive: false });
+  }
+  _dist () {
+    const [a, b] = [...this.ptrs.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+  }
+  zoom (f) { this.radiusT = clamp(this.radiusT * f, this.minR, this.maxR); }
+  reset () {
+    this.thetaT += Math.PI * 2 * Math.round((this.theta - 0.85) / (Math.PI * 2));
+    this.thetaT = 0.85; this.phiT = Math.PI * 0.5 - 0.30; this.radiusT = 4.15;
+  }
+  apply (dt) {
+    if (this.autoRotate) { this.thetaT += this.autoSpeed * dt; this.theta += this.autoSpeed * dt; }
+    const a = 1 - Math.exp(-6.5 * Math.min(dt, 0.06));
+    this.theta += (this.thetaT - this.theta) * a;
+    this.phi += (this.phiT - this.phi) * a;
+    this.radius += (this.radiusT - this.radius) * a;
+    this.cam.position.setFromSpherical(new THREE.Spherical(this.radius, this.phi, this.theta));
+    this.cam.lookAt(0, 0, 0);
+  }
+}
+const controls = new Orbit(camera, canvas);
+
+/* ── 11. UI ───────────────────────────────────────────────────────────────── */
+/* legend */
+const legendEl = $('legend');
+const maxCount = Math.max(...REGION_COUNT);
+REGIONS.forEach((r, i) => {
+  const li = document.createElement('li');
+  li.className = 'leg';
+  li.style.setProperty('--c', r.color);
+  li.style.setProperty('--w', (REGION_COUNT[i] / maxCount * 100).toFixed(1) + '%');
+  li.setAttribute('aria-pressed', 'false');
+  li.innerHTML = `<span class="dot"></span><span class="nm">${r.name}</span><span class="ct">${REGION_COUNT[i]}</span>`;
+  li.addEventListener('click', () => {
+    focusRegion = focusRegion === i ? FOCUS_NONE : i;
+    [...legendEl.children].forEach((el, j) => el.setAttribute('aria-pressed', String(j === focusRegion)));
+    legendEl.classList.toggle('dimmed', focusRegion !== FOCUS_NONE);
+    markerUniforms.uFocus.value = focusRegion;
+    arcUniforms.uFocus.value = focusRegion;
+    window.__packetMat.uniforms.uFocus.value = focusRegion;
+  });
+  legendEl.appendChild(li);
+});
+
+const TOTAL = CITIES.length;
+$('countCities').textContent = TOTAL + ' cities';
+$('countRegions').textContent = REGIONS.length + ' regions';
+$('statCities').textContent = TOTAL;
+$('statRegions').textContent = REGIONS.length;
+$('statLinks').textContent = LINKS.length;
+
+/* node card */
+const nodeEl = $('node');
+function fmtLat (v) { return Math.abs(v).toFixed(3) + '° ' + (v >= 0 ? 'N' : 'S'); }
+function fmtLon (v) { return Math.abs(v).toFixed(3) + '° ' + (v >= 0 ? 'E' : 'W'); }
+let lockedCity = -1;
+
+function renderNode (idx) {
+  if (idx < 0) {
+    $('nodeEmpty').hidden = false; $('nodeBody').hidden = true;
+    nodeEl.classList.remove('active'); nodeEl.style.removeProperty('--c');
+    $('selNote').textContent = 'live';
+    return;
+  }
+  const c = CITIES[idx];
+  $('nodeEmpty').hidden = true; $('nodeBody').hidden = false;
+  nodeEl.classList.add('active'); nodeEl.style.setProperty('--c', REGIONS[c.region].color);
+  $('nDot').style.setProperty('--c', REGIONS[c.region].color);
+  $('nName').textContent = c.name;
+  $('nRegion').textContent = REGIONS[c.region].name;
+  $('nLat').textContent = fmtLat(c.lat);
+  $('nLon').textContent = fmtLon(c.lon);
+  $('nPop').textContent = c.pop + (c.hub ? ' · hub' : '');
+  $('nRps').textContent = (Math.round(1400 + c.seed * 96000)).toLocaleString() + ' rps';
+  $('nMs').textContent = (5 + Math.round(c.seed * 34)) + ' ms';
+  $('nUp').textContent = (99.94 + c.seed * 0.059).toFixed(2) + '%';
+  $('nRole').textContent = c.hub ? 'Tier-1 backbone site' : 'Edge PoP';
+  const routes = DEGREE[idx];
+  $('nRoutes').textContent = routes ? routes + (routes === 1 ? ' route' : ' routes') : 'standby spoke';
+  $('selNote').textContent = lockedCity === idx ? 'locked' : 'live';
+}
+
+/* tooltip */
+const tipEl = $('tip');
+function showTip (c, sx, sy) {
+  $('tipName').textContent = c.name;
+  $('tipDot').style.setProperty('--c', REGIONS[c.region].color);
+  $('tipMeta').innerHTML =
+    `<span>${fmtLat(c.lat)}</span><span>${fmtLon(c.lon)}</span><span style="color:${REGIONS[c.region].color}">${REGIONS[c.region].name}</span>`;
+  const pad = 14;
+  const w = tipEl.offsetWidth || 180, h = tipEl.offsetHeight || 46;
+  const x = clamp(sx + 18, pad, window.innerWidth - w - pad);
+  const y = clamp(sy - h - 14, pad, window.innerHeight - h - pad);
+  tipEl.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1)`;
+  tipEl.classList.add('on');
+}
+const hideTip = () => tipEl.classList.remove('on');
+
+/* pause */
+let paused = false;
+const pauseBtn = $('pauseBtn');
+function setPaused (v) {
+  paused = v;
+  pauseBtn.classList.toggle('paused', paused);
+  pauseBtn.setAttribute('aria-pressed', String(paused));
+  $('pauseTxt').textContent = paused ? 'Resume' : 'Pause';
+  $('live').classList.toggle('off', paused);
+  $('live').lastChild.textContent = paused ? 'PAUSED' : 'LIVE';
+}
+pauseBtn.addEventListener('click', () => setPaused(!paused));
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); setPaused(!paused); }
+  if (e.key === 'r' || e.key === 'R') controls.reset();
+});
+
+/* ── 12. interaction: hover + pick ────────────────────────────────────────── */
+const mouse = { x: -1e4, y: -1e4, inside: false };
+const v3 = new THREE.Vector3(), vCam = new THREE.Vector3(), vNrm = new THREE.Vector3();
+
+canvas.addEventListener('pointermove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top;
+  mouse.inside = true;
+});
+canvas.addEventListener('pointerleave', () => { mouse.inside = false; mouse.x = mouse.y = -1e4; });
+canvas.addEventListener('pointerdown', (e) => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; mouse.inside = true;
+});
+canvas.addEventListener('click', () => {
+  if (controls.moved > 6) return;
+  lockedCity = hovered;
+  selected = hovered;
+  markerUniforms.uSel.value = selected >= 0 ? CITIES[selected].seed : -1;
+  arcUniforms.uSel.value = selected;
+  if (selected >= 0) {
+    selRingA.visible = selRingB.visible = true;
+    const col = new THREE.Color(REGIONS[CITIES[selected].region].color);
+    selRingA.material.color.copy(col); selRingB.material.color.copy(col);
+    placeRing(selRingA, CITIES[selected]); placeRing(selRingB, CITIES[selected]);
+  } else {
+    selRingA.visible = selRingB.visible = false;
+  }
+  renderNode(selected >= 0 ? selected : hovered);
+});
+
+let hoverCity = -1;
+function updateHover (time) {
+  let best = -1, bestD = 17 * 17;
+  if (mouse.inside) {
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    for (let i = 0; i < CITIES.length; i++) {
+      const c = CITIES[i];
+      v3.copy(c.local).applyMatrix4(world.matrixWorld);
+      vCam.copy(camera.position).sub(v3);
+      const dist = vCam.length();
+      vCam.multiplyScalar(1 / dist);
+      vNrm.copy(v3).normalize();
+      if (vCam.dot(vNrm) < 0.10) continue;                  // behind the limb
+      if (focusRegion !== FOCUS_NONE && c.region !== focusRegion) continue;
+      v3.project(camera);
+      if (v3.z > 1) continue;
+      const sx = (v3.x * 0.5 + 0.5) * W, sy = (-v3.y * 0.5 + 0.5) * H;
+      const d = (sx - mouse.x) ** 2 + (sy - mouse.y) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+  }
+  hoverCity = best;
+  if (best !== hovered) {
+    hovered = best;
+    markerUniforms.uHover.value = best >= 0 ? CITIES[best].seed : -1;
+    if (best >= 0) {
+      hoverRing.visible = true;
+      hoverRing.material.color.set(REGIONS[CITIES[best].region].color);
+      placeRing(hoverRing, CITIES[best]);
+    } else hoverRing.visible = false;
+    if (lockedCity < 0) renderNode(best);
+  }
+  if (best >= 0) {
+    v3.copy(CITIES[best].local).applyMatrix4(world.matrixWorld).project(camera);
+    const r = canvas.getBoundingClientRect();
+    showTip(CITIES[best], (v3.x * 0.5 + 0.5) * r.width + r.left, (-v3.y * 0.5 + 0.5) * r.height + r.top);
+  } else hideTip();
+}
+
+/* live metrics */
+let rps = 12.4;
+function tickMetrics (dt) {
+  rps += (Math.sin(performance.now() * 0.00021) * 0.35 + (rand() - 0.5) * 0.22) * dt * 3;
+  rps = clamp(rps, 9.4, 16.8);
+  $('mRps').textContent = rps.toFixed(2) + ' M req/s';
+  $('mLat').textContent = (17.4 + Math.sin(performance.now() * 0.0004) * 1.6).toFixed(1) + ' ms';
+  $('mPop').textContent = (331 + Math.round(Math.sin(performance.now() * 0.0003) * 6));
+}
+
+/* ── 13. post-processing: bloom lifts every additive glow in the scene ────── */
+let composer = null;
+try {
+  const [{ EffectComposer }, { RenderPass }, { UnrealBloomPass }, { OutputPass }] = await Promise.all([
+    import('three/addons/postprocessing/EffectComposer.js'),
+    import('three/addons/postprocessing/RenderPass.js'),
+    import('three/addons/postprocessing/UnrealBloomPass.js'),
+    import('three/addons/postprocessing/OutputPass.js'),
+  ]);
+  composer = new EffectComposer(renderer);
+  // The composer renders into its own targets, so renderer antialias:true does
+  // nothing on its own — without samples the globe silhouette aliases into a
+  // dashed edge. 4x MSAA on the composer targets restores a clean limb.
+  const devicePx = window.innerWidth * window.innerHeight * renderer.getPixelRatio();
+  const msaa = devicePx > 3.2e6 ? 2 : 4;      // keep huge viewports affordable
+  composer.renderTarget1.samples = msaa;
+  composer.renderTarget2.samples = msaa;
+  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.38, 0.52, 0.62));
+  composer.addPass(new OutputPass());
+} catch (e) {
+  console.warn('[globe] bloom unavailable — rendering without post-processing.', e);
+}
+
+/* ── 14. resize + adaptive quality ────────────────────────────────────────── */
+let needsResize = true;
+let qualityScale = 1;                 // lowered automatically on slow hardware
+function setQuality (scale, samples) {
+  qualityScale = scale;
+  if (composer && samples != null) {
+    const cur = composer.renderTarget1.samples;
+    if (cur !== samples) {
+      [composer.renderTarget1, composer.renderTarget2].forEach((r) => { r.samples = samples; r.dispose(); });
+    }
+  }
+  needsResize = true;
+}
+function resize () {
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  renderer.setPixelRatio(Math.max(0.75, Math.min(window.devicePixelRatio || 1, 2) * qualityScale));
+  const pr = renderer.getPixelRatio();
+  markerUniforms.uScale.value = focalScale();
+  markerUniforms.uPR.value = pr;
+  arcUniforms.uPR.value = pr;
+  window.__packetMat.uniforms.uScale.value = focalScale();
+  window.__packetMat.uniforms.uPR.value = pr;
+  window.__stars.uniforms.uPR.value = pr;
+  window.__stars.uniforms.uH.value = Math.max(0.7, h / 900);
+  if (composer) { composer.setPixelRatio(pr); composer.setSize(w, h); }
+  needsResize = false;
+}
+window.addEventListener('resize', () => { needsResize = true; });
+
+/* ── 15. loop ─────────────────────────────────────────────────────────────── */
+const clock = new THREE.Clock();
+let t = 0, spin = 1.0;
+
+let perfAcc = 0, perfN = 0, perfStage = 0;
+function frame () {
+  requestAnimationFrame(frame);
+  const raw = clock.getDelta();
+  const dt = Math.min(raw, 0.05);
+  if (needsResize) resize();
+
+  /* one-shot quality probe: shed pixels if the device cannot keep up */
+  if (!paused && perfStage < 2) {
+    perfAcc += raw; perfN++;
+    if (perfN >= 70) {
+      const avg = perfAcc / perfN;
+      perfAcc = 0; perfN = 0; perfStage++;
+      if (avg > 0.034) { setQuality(0.8, 2); }          // < ~29 fps
+      if (avg > 0.06) { setQuality(0.65, 0); perfStage = 2; }  // < ~17 fps
+    }
+  }
+  if (!paused) t += dt;
+
+  /* ease world spin down while the user is inspecting a node */
+  const target = (hovered >= 0 || selected >= 0) ? 0.12 : 1;
+  spin += (target - spin) * (1 - Math.exp(-2.2 * dt));
+
+  /* intro fly-in */
+  controls.idle += dt;
+  if (controls.idle > 6 && !paused) controls.autoRotate = true;
+  controls.apply(paused ? 0 : dt);
+
+  world.rotation.y = t * 0.0105 * spin;
+  clouds.rotation.y = t * 0.0045 * spin + 0.4;
+  world.updateMatrixWorld();
+
+  markerUniforms.uTime.value = t;
+  arcUniforms.uTime.value = t;
+  window.__packetMat.uniforms.uTime.value = t;
+  window.__stars.uniforms.uTime.value = t;
+  earthMat.uniforms.uNightGain.value = 1.0;
+
+  if (selRingB.visible) {
+    const k = 1 + 0.16 * Math.sin(t * 2.4);
+    selRingB.scale.setScalar(k);
+    selRingB.material.opacity = 0.34 + 0.28 * (1 - (k - 1) / 0.16);
+  }
+  if (hoverRing.visible) hoverRing.material.opacity = 0.55 + 0.35 * Math.sin(t * 3.4);
+
+  updateHover(t);
+  if (!paused) tickMetrics(dt);
+  if (composer) composer.render(dt); else renderer.render(scene, camera);
+}
+
+/* ── 16. boot ─────────────────────────────────────────────────────────────── */
+resize();
+earthMat.uniforms.uDay.value = TEX.day;
+earthMat.uniforms.uNight.value = TEX.night;
+earthMat.uniforms.uSpec.value = TEX.spec;
+cloudMat.uniforms.uMap.value = TEX.clouds;
+
+requestAnimationFrame(frame);
+renderNode(-1);
+tickMetrics(0.016);
+setTimeout(() => $('loader').classList.add('gone'), 420);
+window.__globe = { THREE, scene, camera, renderer, world, controls, CITIES, REGIONS, LINKS, TEX, earthMat, cloudMat, arcUniforms, markerUniforms, composer, get bloom(){ return composer && composer.passes.find((p) => p.constructor.name === 'UnrealBloomPass'); } };
+console.log(`[globe] ${CITIES.length} cities · ${REGIONS.length} regions · ${LINKS.length} routes · ${Math.round(performance.now() - T0)}ms`);
+</script>
+</body>
+</html>
